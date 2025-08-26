@@ -11,11 +11,11 @@ class yolo_camera_detect(Node):
         self.inference_time = []
         super().__init__('turtlebot4_first_python_node')
 
-        self.sub_cam = self.create_subscription(Image, '/robot8/oakd/rgb/preview/image_raw', self.callback_cam, 1)
+        self.sub_cam = self.create_subscription(Image, '/robot8/oakd/rgb/preview/image_raw', self.callback_cam, 10)
         self.pub_yolo = self.create_publisher(Image, '/robot8/image', 1)
 
         self.bridge = CvBridge()
-        self.model = YOLO("/home/rokey/Downloads/train/train_8s_patient20_avg83/weights/best.pt")
+        self.model = YOLO("src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt")
         # self.model = YOLO("/home/rokey/Downloads/train/train_8n_patient30_avg80/weights/best.pt")
         # self.model = YOLO("/home/rokey/Downloads/train/train_8n_patient20_avg80/weights/best.pt")
         # self.model = YOLO("/home/rokey/Downloads/train/train_11s_patient20_avg77/weights/best.pt")

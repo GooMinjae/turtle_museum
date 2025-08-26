@@ -28,7 +28,7 @@ class YoloPerson(Node):
 
 
         # Load YOLOv8 model
-        self.model = YOLO("src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt")
+        self.model = YOLO("/home/rokey/turtlebot4_ws/src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt")
         # YOLOv8n 가중치 로드(경로는 로컬 파일)
 
         self.main_pub = self.create_publisher(String, '/main/pub', 10)
@@ -51,6 +51,7 @@ class YoloPerson(Node):
         # Periodic detection and goal logic
         self.create_timer(0.5, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
         self.last_feedback_log_time = 0                  # 피드백 로그 간격 조절용
+
     def camera_info_callback(self, msg):
         self.K = np.array(msg.k).reshape(3, 3)           # 9개 요소를 3x3 내참행렬로 변환
         if not self.logged_intrinsics:
@@ -80,12 +81,14 @@ class YoloPerson(Node):
             self.camera_frame = msg.header.frame_id      # RGB 프레임 이름 저장
         except Exception as e:
             self.get_logger().error(f"RGB conversion failed: {e}")
+
     def depth_callback(self, msg):
         try:
             self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
             # 인코딩 유지(passthrough): 16UC1(보통 mm) 또는 32FC1(보통 m)
         except Exception as e:
             self.get_logger().error(f"Depth conversion failed: {e}")
+
     def process_frame(self):
         if self.K is None or self.rgb_image is None or self.depth_image is None:
             return                                      # 준비 안 됐으면 스킵
@@ -101,13 +104,14 @@ class YoloPerson(Node):
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)    # 박스 그리기
             cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 5),     # 라벨/점수 표시
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            if label.lower() == "person":               # 사람 클래스만 추적
+            if label.lower() == "car" or "bottle":               # 사람 클래스만 추적
                 u = int((x1 + x2) // 2)                 # 박스 중심 u(열)
                 v = int((y1 + y2) // 2)                 # 박스 중심 v(행)
                 z = float(self.depth_image[v, u])       # 해당 픽셀의 깊이값
                 if z == 0.0:
                     self.get_logger().warn("Depth value is 0 at detected person's center.")
                     continue                            # 깊이 무효면 다음 박스
+
                 fx, fy = self.K[0, 0], self.K[1, 1]     # 초점거리
                 cx, cy = self.K[0, 2], self.K[1, 2]     # 주점
                 x = (u - cx) * z / fx                   # 핀홀 역투영: 카메라 좌표 x
@@ -117,9 +121,9 @@ class YoloPerson(Node):
                 pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
                 pt.header.stamp = rclpy.time.Time().to_msg()  # 최신 TF 사용(시간 0)
                 pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
-                self.get_logger().warn("publiser")
+                self.get_logger().info("publiser")
                 
-                self.person_point_cam_pub.publish(pt)
+                # self.person_point_cam_pub.publish(pt)
             elif label.lower() == "one":
                 main_msg = String()
                 main_msg.data = 'one'
@@ -128,10 +132,7 @@ class YoloPerson(Node):
                 main_msg = String()
                 main_msg.data = 'five'
                 self.main_pub.publish(main_msg)
-            elif label.lower() == "bottle":
-                main_msg = String()
-                main_msg.data = 'bottle'
-                self.main_pub.publish(main_msg)
+
         self.display_frame = frame
 
 def main():
