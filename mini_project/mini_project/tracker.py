@@ -36,32 +36,32 @@ class tracker_node(Node):
         
             
     def callback_depth(self,pt):
-        # if self.target_result == 'person' or self.target_result == 'bottle':
-        try:
-            self.get_logger().info(f"traget_result={self.target_result}")
+        if self.target_result == 'person' or self.target_result == 'bottle':
+            try:
+                self.get_logger().info(f"traget_result={self.target_result}")
 
-            pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
-            self.latest_map_point = pt_map
+                pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
+                self.latest_map_point = pt_map
 
-            # Don't send more goals if we're already close
-            if self.block_goal_updates:
-                self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
-                
+                # Don't send more goals if we're already close
+                if self.block_goal_updates:
+                    self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
+                    
 
-            self.get_logger().info(f"Detected person at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f})")
+                self.get_logger().info(f"Detected person at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f})")
 
-            if self.goal_handle:
-                self.get_logger().info("Canceling previous goal...")
-                self.goal_handle.cancel_goal_async()
+                if self.goal_handle:
+                    self.get_logger().info("Canceling previous goal...")
+                    self.goal_handle.cancel_goal_async()
 
-            # self.send_goal()
-            # if self.target_result == "bottle":
-            #     self.target_result = 'None'
-            #     self.pub_water.publish(Bool(data=True))
-            #     self.get_logger().info("traget_result=bottle")
+                self.send_goal()
+                if self.target_result == "bottle":
+                    self.target_result = 'None'
+                    self.pub_water.publish(Bool(data=True))
+                    self.get_logger().info("traget_result=bottle")
 
-        except Exception as e:
-            self.get_logger().warn(f"TF transform to map failed: {e}")
+            except Exception as e:
+                self.get_logger().warn(f"TF transform to map failed: {e}")
 
 
 
