@@ -1,4 +1,5 @@
 import rclpy
+from std_msgs.msg import String,Bool
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
@@ -16,11 +17,15 @@ class tracker_node(Node):
         self.close_enough_distance = 2.0 # 거리유지?
 
         self.create_subscription(PointStamped,'/robot8/point_camera',self.callback_depth,10)
-        self.target_result = False
-        self.create_subscription()
-        self.create_subscription()
+        self.target_result = None
+        self.create_subscription( String,'',self.callback_result,10)
+        self.pub_water = self.create_publisher(Bool,'',10)
+    def callback_result(self,msg):
+        self.target_result = msg.data
+        
+            
     def callback_depth(self,pt):
-        if self.target_result:
+        if self.target_result == 'person' or self.target_result == 'bottle':
             try:
                 pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
                 self.latest_map_point = pt_map
@@ -37,9 +42,12 @@ class tracker_node(Node):
                     self.goal_handle.cancel_goal_async()
 
                 self.send_goal()
-
+                if self.target_result == "bottle":
+                    self.target_result == None
+                    self.pub_water.publish(Bool(data=True))
             except Exception as e:
                 self.get_logger().warn(f"TF transform to map failed: {e}")
+
 
 
 
