@@ -1,0 +1,6 @@
+*sublime-*
+*.svg
+*.xcf
+.vscode/
+__pycache__/
+*.pyc
