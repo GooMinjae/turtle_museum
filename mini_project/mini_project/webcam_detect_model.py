@@ -76,17 +76,14 @@
 
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 두 대의 웹캠으로 YOLO 추론을 수행하고, 주기적으로 주석(박스) 입힌 이미지를 퍼블리시합니다.
-또한 main_node.py가 서비스 요청을 보내면 마지막 프레임을 handoff 토픽으로 1회 퍼블리시하고 노드를 종료합니다.
-
-[핵심 포인트]
-1) 카메라 2대: CAMERA_INDEXES로 설정 (예: [0, 2])
-2) rqt용 스트림: /cam0/yolo_image, /cam1/yolo_image 로 계속 퍼블리시
-3) main_node.py 요청(서비스) 시: /handoff/cam0, /handoff/cam1 에 "마지막 프레임" 1회 퍼블리시 (Transient Local: 구독이 늦어도 전달)
-4) 퍼블리시 후 깔끔하게 종료
-
-작성: ChatGPT, ROS2 Humble + Python3, Ultralytics YOLOv8
+또한 main_node.py가 서비스 요청을 보내면 마지막 프레임을 handoff 토픽으로 1회 퍼블리시하고,
+가장 최근 유효 탐지가 있었던 카메라를 'living_room'/'kitchen' 중 하나로 응답한 뒤 종료합니다.
 """
 
 import os
@@ -100,61 +97,63 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from threading import Lock
 
-# ===== (필수) Ultralytics YOLO =====
 from ultralytics import YOLO
 
 
 class DualCamYoloNode(Node):
     def __init__(self):
-        super().__init__('webcam_yolo_node')
+        super().__init__('dual_cam_yolo_node')
 
         # ===============
         # [설정값 한번에]
         # ===============
         # [MODEL]
-        # ▶ 모델 경로 (필요 시 주석 해제/수정)
-        # self.model_path = "/home/rokey/train_ws/src/runs/detect/yolov8-custom2-improved2/weights/best.pt"  # 예시
-        self.model_path = "/home/rokey/turtlebot4_ws/src/mini_project/resource/best.pt"  # 현재 최종
-        self.conf_thres = 0.75  # YOLO confidence
+        self.model_path = "/home/rokey/turtlebot4_ws/src/mini_project/resource/best.pt"
+        self.conf_thres = 0.70
+        self.imgsz = 640
+        self.device = None  # 'cuda:0' 등
 
         # [CAMERA]
-        # ▶ 사용 장치 번호 (예: 노트북 내장=0, 외장=2)
-        self.CAMERA_INDEXES = [5, 2]  # 필요 시 [1, 2] 등으로 변경
-        self.frame_width = None  # None이면 원본
+        self.CAMERA_INDEXES = [5, 2]  # cam0=5(living_room), cam1=2(kitchen)
+        self.frame_width = None
         self.frame_height = None
-        self.target_fps = 20.0  # 퍼블리시 주기(FPS)
+        self.target_fps = 20.0
 
         # [TOPIC]
-        # ▶ rqt용 실시간 스트림 토픽 (변경 가능)
-        self.OUT_TOPICS = [
-            '/cam0/yolo_image',
-            '/cam1/yolo_image',
-        ]
-        # ▶ main_node.py로 1회 전달할 handoff 토픽 (변경 가능)
-        self.HANDOFF_TOPICS = [
-            '/handoff/cam0',
-            '/handoff/cam1',
-        ]
+        self.OUT_TOPICS = ['/cam0/yolo_image', '/cam1/yolo_image']
+        self.HANDOFF_TOPICS = ['/handoff/cam0', '/handoff/cam1']
+
+        # [오검출 완화(옵션)]
+        self.allowed_classes = None   # 예: ['person'], None이면 제한 없음
+        self.min_area_ratio = 0.01
+        self.n_consec = 2
 
         # ===============
         # [내부 상태]
         # ===============
         self.bridge = CvBridge()
         self.model = None
-        self.caps = []  # 각 카메라용 cv2.VideoCapture
+        self.caps = []
         self.last_frames = [None for _ in self.CAMERA_INDEXES]
         self.last_lock = Lock()
         self.exit_after_handoff = False
 
+        self.pos_counter = [0, 0]
+        self.last_valid = [False, False]
+        self.last_best_conf = [0.0, 0.0]
+        self.last_detect_time = [0.0, 0.0]
+
+        # [시작/탐색 로그 제어]
+        self._search_logged = False
+        self.get_logger().info('[시작] DualCamYoloNode를 시작합니다.')
+
         # ===============
         # [퍼블리셔 준비]
         # ===============
-        # rqt 실시간 스트림용 (일반 QoS)
         qos_stream = QoSProfile(depth=1)
-        qos_stream.reliability = ReliabilityPolicy.RELIABLE
+        qos_stream.reliability = ReliabilityPolicy.BEST_EFFORT
         qos_stream.history = HistoryPolicy.KEEP_LAST
 
-        # handoff 1회 전달용 (지속성: 구독이 늦어도 1회 받은 값 유지)
         qos_handoff = QoSProfile(depth=1)
         qos_handoff.reliability = ReliabilityPolicy.RELIABLE
         qos_handoff.history = HistoryPolicy.KEEP_LAST
@@ -162,18 +161,13 @@ class DualCamYoloNode(Node):
 
         self.pub_stream = []
         self.pub_handoff = []
-        for i, _ in enumerate(self.CAMERA_INDEXES):
-            self.pub_stream.append(
-                self.create_publisher(Image, self.OUT_TOPICS[i], qos_stream)
-            )
-            self.pub_handoff.append(
-                self.create_publisher(Image, self.HANDOFF_TOPICS[i], qos_handoff)
-            )
+        for i, cam_dev in enumerate(self.CAMERA_INDEXES):
+            self.pub_stream.append(self.create_publisher(Image, self.OUT_TOPICS[i], qos_stream))
+            self.pub_handoff.append(self.create_publisher(Image, self.HANDOFF_TOPICS[i], qos_handoff))
 
         # ===============
         # [서비스 준비]
         # ===============
-        # main_node.py가 호출: 마지막 프레임을 handoff 토픽에 1회 퍼블리시 후 종료
         self.srv = self.create_service(Trigger, '/yolo_dual_cam/push_once_and_exit', self.on_push_once_and_exit)
 
         # ===============
@@ -186,103 +180,152 @@ class DualCamYoloNode(Node):
         # [주기 타이머]
         # ===============
         self.timer = self.create_timer(1.0 / self.target_fps, self.on_timer)
-        self.get_logger().info('DualCamYoloNode started. Press Ctrl+C to stop.')
         self.get_logger().info(f"Streaming topics: {self.OUT_TOPICS}")
         self.get_logger().info(f"Handoff topics  : {self.HANDOFF_TOPICS}")
 
-    # ------------------------------------------------------------------
-    # 초기화: YOLO 모델
-    # ------------------------------------------------------------------
     def _init_model(self):
         if not os.path.exists(self.model_path):
             self.get_logger().error(f"YOLO model not found: {self.model_path}")
             raise FileNotFoundError(self.model_path)
         self.model = YOLO(self.model_path)
+        if self.device:
+            try:
+                self.model.to(self.device)
+                self.get_logger().info(f"YOLO device set to: {self.device}")
+            except Exception as e:
+                self.get_logger().warn(f"Failed to move model to {self.device}: {e}")
         self.get_logger().info(f"Loaded YOLO model: {self.model_path}")
 
-    # ------------------------------------------------------------------
-    # 초기화: 카메라 2대
-    # ------------------------------------------------------------------
     def _init_cameras(self):
-        for idx in self.CAMERA_INDEXES:
-            cap = cv2.VideoCapture(idx)
+        for i, cam_dev in enumerate(self.CAMERA_INDEXES):
+            cap = cv2.VideoCapture(cam_dev)
             if not cap.isOpened():
-                self.get_logger().error(f"Failed to open camera index: {idx}")
-                raise RuntimeError(f"Camera open failed: {idx}")
-            # 옵션: 크기 지정 (None이면 원본 유지)
+                self.get_logger().error(f"Failed to open camera index: {cam_dev}")
+                raise RuntimeError(f"Camera open failed: {cam_dev}")
             if self.frame_width and self.frame_height:
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
             cap.set(cv2.CAP_PROP_FPS, self.target_fps)
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            try:
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+            except Exception:
+                pass
             self.caps.append(cap)
-        self.get_logger().info(f"Opened cameras: {self.CAMERA_INDEXES}")
 
-    # ------------------------------------------------------------------
-    # 타이머 콜백: 각 카메라에서 프레임 → YOLO → 박스 그려서 퍼블리시
-    # ------------------------------------------------------------------
+    def _evaluate_detection(self, result, frame_shape):
+        boxes = result.boxes
+        names = result.names
+        if boxes is None or len(boxes) == 0:
+            return False, 0.0
+        h, w = frame_shape[:2]
+        min_area = self.min_area_ratio * (w * h)
+        best_conf = 0.0
+        any_valid = False
+        for box in boxes:
+            cls_id = int(box.cls[0])
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            area = max(0, x2 - x1) * max(0, y2 - y1)
+            if conf < self.conf_thres:
+                continue
+            if area < min_area:
+                continue
+            if self.allowed_classes is not None:
+                cls_name = names[cls_id]
+                if cls_name not in self.allowed_classes:
+                    continue
+            any_valid = True
+            if conf > best_conf:
+                best_conf = conf
+        return any_valid, best_conf
+
     def on_timer(self):
-        # 종료 플래그가 이미 서면 타이머 종료
         if self.exit_after_handoff:
-            self.get_logger().info('Exit flag set; stopping timer and shutting down...')
             self.timer.cancel()
-            # 약간의 여유를 준 뒤 shutdown
             rclpy.shutdown()
             return
 
+        if not self._search_logged:
+            self.get_logger().info('[탐색] 카메라에서 사람을 탐색 중...')
+            self._search_logged = True
+
+        now = time.time()
         for cam_i, cap in enumerate(self.caps):
             ok, frame = cap.read()
             if not ok:
-                self.get_logger().warning(f"Camera {self.CAMERA_INDEXES[cam_i]} read failed")
+                self.get_logger().warning(f"Camera {self.CAMERA_INDEXES[cam_i]} read failed (cam{cam_i})")
                 continue
 
-            # YOLO 추론 (ultralytics: numpy 배열 입력 가능)
-            results = self.model.predict(source=frame, conf=self.conf_thres, verbose=False)
+            results = self.model.predict(
+                source=frame, conf=self.conf_thres, imgsz=self.imgsz,
+                device=self.device if self.device else None, verbose=False
+            )
             result = results[0]
+
+            has_valid, best_conf = self._evaluate_detection(result, frame.shape)
+            if has_valid:
+                self.pos_counter[cam_i] = min(self.pos_counter[cam_i] + 1, self.n_consec)
+            else:
+                self.pos_counter[cam_i] = max(self.pos_counter[cam_i] - 1, 0)
+
+            self.last_valid[cam_i] = (self.pos_counter[cam_i] >= self.n_consec)
+            self.last_best_conf[cam_i] = best_conf if self.last_valid[cam_i] else 0.0
+            if self.last_valid[cam_i]:
+                self.last_detect_time[cam_i] = now
+
+            annotated = frame
             boxes = result.boxes
             names = result.names
-
-            # 박스 그리기 (OpenCV)
-            annotated = frame.copy()
             if boxes is not None:
                 for box in boxes:
                     cls_id = int(box.cls[0])
                     conf = float(box.conf[0]) * 100.0
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    if self.allowed_classes is not None and names[cls_id] not in self.allowed_classes:
+                        continue
                     label = f"{names[cls_id]} {conf:.1f}%"
                     cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
                     cv2.putText(annotated, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
-            # 최근 프레임 보관 (handoff 용)
             with self.last_lock:
                 self.last_frames[cam_i] = annotated.copy()
 
-            # rqt용 스트림 퍼블리시
             msg = self.bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
             self.pub_stream[cam_i].publish(msg)
 
-    # ------------------------------------------------------------------
-    # 서비스: 마지막 프레임 1회 handoff 퍼블리시 후 종료
-    # ------------------------------------------------------------------
-    def on_push_once_and_exit(self, request, response):  # Trigger.srv
-        self.get_logger().info('Service called: push_once_and_exit')
-        # 마지막 프레임을 handoff 토픽으로 퍼블리시
+    def on_push_once_and_exit(self, request, response):
+        # 마지막 프레임 1회 handoff 퍼블리시
         with self.last_lock:
             for cam_i, frame in enumerate(self.last_frames):
                 if frame is None:
                     continue
                 msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
                 self.pub_handoff[cam_i].publish(msg)
-        # 퍼블리시가 네트워크로 흘러가도록 잠깐 대기
-        time.sleep(0.2)
-        # 종료 플래그 ON
-        self.exit_after_handoff = True
+
+        # living_room / kitchen 결정 (기존 로직 유지)
+        cam_name = ["living_room", "kitchen"]
+        def score(i):
+            cur_valid = 1 if self.last_valid[i] else 0
+            return (cur_valid, self.last_detect_time[i], self.last_best_conf[i])
+        choice = 0
+        if score(1) > score(0):
+            choice = 1
+
         response.success = True
-        response.message = 'Published last frames to handoff topics; exiting node.'
+        response.message = cam_name[choice]
+
+        # == 요청하신 한국어 로그 ==
+        self.get_logger().info(f'[결과] 사람이 {response.message}에 있습니다')
+        self.get_logger().info('[끝] 노드를 종료합니다.')
+
+        time.sleep(0.2)
+        self.exit_after_handoff = True
         return response
 
-    # ------------------------------------------------------------------
-    # 종료 처리
-    # ------------------------------------------------------------------
     def destroy_node(self):
         for cap in self.caps:
             try:
