@@ -29,6 +29,7 @@ setup(
             'patrol_loop = turtlebot4_python_tutorials.patrol_loop:main',
             'mail_delivery = turtlebot4_python_tutorials.mail_delivery:main',
             'yolo = turtlebot4_python_tutorials.yolo:main',
+            'compare_depth=turtlebot4_python_tutorials.compare_depth:main',
         ],
     },
 )
