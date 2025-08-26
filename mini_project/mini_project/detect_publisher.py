@@ -28,7 +28,7 @@ class YoloPerson(Node):
 
 
         # Load YOLOv8 model
-        self.model = YOLO("/home/rokey/turtlebot4_ws/src/src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt")
+        self.model = YOLO("src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt")
         # YOLOv8n 가중치 로드(경로는 로컬 파일)
 
         self.main_pub = self.create_publisher(String, '/main/pub', 10)
@@ -42,11 +42,11 @@ class YoloPerson(Node):
         self.display_thread = threading.Thread(target=self.display_loop, daemon=True)
         self.display_thread.start()                       # OpenCV imshow 전용 스레드 시작
         # ROS 2 subscriptions
-        self.create_subscription(CameraInfo, '/oakd/rgb/preview/camera_info', self.camera_info_callback, 10)
+        self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
         # 카메라 내부파라미터 구독(큐 크기 10)
-        self.create_subscription(Image, '/oakd/rgb/preview/image_raw', self.rgb_callback, 10)
+        self.create_subscription(Image, '/robot8/oakd/rgb/image_raw', self.rgb_callback, 10)
         # RGB 이미지 구독
-        self.create_subscription(Image, '/oakd/rgb/preview/depth', self.depth_callback, 10)
+        self.create_subscription(Image, '/robot8/oakd/stereo/image_raw', self.depth_callback, 10)
         # Depth 이미지 구독
         # Periodic detection and goal logic
         self.create_timer(0.5, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
@@ -117,7 +117,8 @@ class YoloPerson(Node):
                 pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
                 pt.header.stamp = rclpy.time.Time().to_msg()  # 최신 TF 사용(시간 0)
                 pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
-
+                self.get_logger().warn("publiser")
+                
                 self.person_point_cam_pub.publish(pt)
             elif label.lower() == "one":
                 main_msg = String()

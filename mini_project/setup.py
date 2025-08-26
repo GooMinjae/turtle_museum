@@ -20,6 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'depth_to_3d=mini_project.3_1_b_depth_to_3d:main',
         ],
     },
 )
