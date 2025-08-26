@@ -1,8 +1,6 @@
 import rclpy                               # ROS 2 파이썬 클라이언트 라이브러리
 from rclpy.node import Node                # ROS 2 노드 베이스 클래스
-from rclpy.action import ActionClient      # 액션 서버와 통신하기 위한 클라이언트
-from nav2_msgs.action import NavigateToPose # Nav2의 목표 이동 액션 타입
-from sensor_msgs.msg import Image, CameraInfo # RGB/Depth 이미지, 카메라 내부파라미터
+from sensor_msgs.msg import Image, CameraInfo, CompressedImage # RGB/Depth 이미지, 카메라 내부파라미터
 from geometry_msgs.msg import PointStamped, PoseStamped # 좌표계 포함 점/포즈 메시지
 from cv_bridge import CvBridge            # ROS Image <-> OpenCV 변환 브릿지
 import numpy as np                        # 수치연산
@@ -31,7 +29,7 @@ class YoloPerson(Node):
         self.model = YOLO("/home/rokey/turtlebot4_ws/src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt")
         # YOLOv8n 가중치 로드(경로는 로컬 파일)
 
-        self.main_pub = self.create_publisher(String, '/main/pub', 10)
+        self.main_pub = self.create_publisher(String, '/robot8/which_hand', 10)
 
         self.person_point_cam_pub = self.create_publisher(
             PointStamped, '/robot8/point_camera', 10
@@ -44,9 +42,9 @@ class YoloPerson(Node):
         # ROS 2 subscriptions
         self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
         # 카메라 내부파라미터 구독(큐 크기 10)
-        self.create_subscription(Image, '/robot8/oakd/rgb/image_raw', self.rgb_callback, 10)
+        self.create_subscription(CompressedImage, '/robot8/oakd/rgb/image_compressed', self.rgb_compressed_callback, 10)
         # RGB 이미지 구독
-        self.create_subscription(Image, '/robot8/oakd/stereo/image_raw', self.depth_callback, 10)
+        self.create_subscription(Image, '/robot8/oakd/stereo/image_compressed', self.depth_compressed_callback, 10)
         # Depth 이미지 구독
         # Periodic detection and goal logic
         self.create_timer(0.5, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
@@ -74,17 +72,18 @@ class YoloPerson(Node):
                 time.sleep(0.01)
         cv2.destroyAllWindows()
 
-    def rgb_callback(self, msg):
+    def rgb_compressed_callback(self, msg: CompressedImage):
         try:
-            self.rgb_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            # ROS Image -> OpenCV BGR8
-            self.camera_frame = msg.header.frame_id      # RGB 프레임 이름 저장
+            # JPEG/PNG 압축 이미지를 BGR8로 디코딩
+            self.rgb_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            # frame_id 있으면 저장
+            self.camera_frame = msg.header.frame_id or self.camera_frame
         except Exception as e:
-            self.get_logger().error(f"RGB conversion failed: {e}")
+            self.get_logger().error(f"RGB(compressed) conversion failed: {e}")
 
-    def depth_callback(self, msg):
+    def depth_compressed_callback(self, msg):
         try:
-            self.depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+            self.depth_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='passthrough')
             # 인코딩 유지(passthrough): 16UC1(보통 mm) 또는 32FC1(보통 m)
         except Exception as e:
             self.get_logger().error(f"Depth conversion failed: {e}")
@@ -92,7 +91,7 @@ class YoloPerson(Node):
     def process_frame(self):
         if self.K is None or self.rgb_image is None or self.depth_image is None:
             return                                      # 준비 안 됐으면 스킵
-        results = self.model(self.rgb_image, verbose=False)[0]
+        results = self.model(self.rgb_image, conf = 0.5, verbose=False)[0]
         # YOLO 추론(첫 번째 결과만 사용)
         frame = self.rgb_image.copy()                   # 표시용 복사본
         for det in results.boxes:                       # 감지된 바운딩박스 반복
@@ -132,7 +131,10 @@ class YoloPerson(Node):
                 main_msg = String()
                 main_msg.data = 'five'
                 self.main_pub.publish(main_msg)
-
+            else:
+                main_msg = String()
+                main_msg.data = 'none'
+                self.main_pub.publish(main_msg)
         self.display_frame = frame
 
 def main():
