@@ -21,6 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'depth_to_3d=mini_project.3_1_b_depth_to_3d:main',
+            'webcam = mini_project.webcam_detect_model:main',
+            'main = mini_project.main_logic:main',
         ],
     },
 )
