@@ -3,6 +3,8 @@ from std_msgs.msg import String,Bool
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
+from tf2_ros import Buffer, TransformListener
+import tf2_geometry_msgs  
 
 from turtlebot4_navigation.turtlebot4_navigator import TurtleBot4Directions, TurtleBot4Navigator
 import numpy as np
@@ -12,41 +14,54 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 class tracker_node(Node):
     def __init__(self):
-        super().__init__(tracker_node)
+        super().__init__('tracker_node')
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.close_enough_distance = 2.0 # 거리유지?
+        self.close_enough_distance = 2.0
 
         self.create_subscription(PointStamped,'/robot8/point_camera',self.callback_depth,10)
-        self.target_result = None
-        self.create_subscription( String,'',self.callback_result,10)
-        self.pub_water = self.create_publisher(Bool,'',10)
+        self.target_result = 'bottle'
+        self.create_subscription(String,'/robot8/tracking_object',self.callback_result,10)
+        self.pub_water = self.create_publisher(Bool,'/robot8/is_done_track',10)
+
+        self.goal_handle = None
+        self.block_goal_updates = False
+        self.close_distance_hit_count = 0
+        self.last_feedback_log_time = time.time()
     def callback_result(self,msg):
         self.target_result = msg.data
         
             
     def callback_depth(self,pt):
-        if self.target_result == 'person' or self.target_result == 'bottle':
-            try:
-                pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
-                self.latest_map_point = pt_map
+        # if self.target_result == 'person' or self.target_result == 'bottle':
+        try:
+            self.get_logger().info(f"traget_result={self.target_result}")
 
-                # Don't send more goals if we're already close
-                if self.block_goal_updates:
-                    self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
-                    
+            pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
+            self.latest_map_point = pt_map
 
-                self.get_logger().info(f"Detected person at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f})")
+            # Don't send more goals if we're already close
+            if self.block_goal_updates:
+                self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
+                
 
-                if self.goal_handle:
-                    self.get_logger().info("Canceling previous goal...")
-                    self.goal_handle.cancel_goal_async()
+            self.get_logger().info(f"Detected person at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f})")
 
-                self.send_goal()
-                if self.target_result == "bottle":
-                    self.target_result == None
-                    self.pub_water.publish(Bool(data=True))
-            except Exception as e:
-                self.get_logger().warn(f"TF transform to map failed: {e}")
+            if self.goal_handle:
+                self.get_logger().info("Canceling previous goal...")
+                self.goal_handle.cancel_goal_async()
+
+            # self.send_goal()
+            # if self.target_result == "bottle":
+            #     self.target_result = 'None'
+            #     self.pub_water.publish(Bool(data=True))
+            #     self.get_logger().info("traget_result=bottle")
+
+        except Exception as e:
+            self.get_logger().warn(f"TF transform to map failed: {e}")
 
 
 
@@ -99,3 +114,18 @@ class tracker_node(Node):
         result = future.result().result
         self.get_logger().info(f"Goal finished with result code: {future.result().status}")
         self.goal_handle = None
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = tracker_node()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()

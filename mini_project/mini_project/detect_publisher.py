@@ -9,7 +9,7 @@ import threading                          # GUI 표시(이미지 창)용 별도 
 import time                               # 피드백 주기 제어용
 import cv2                                # OpenCV
 from std_msgs.msg import String
-
+import struct
 class YoloPerson(Node):
     def __init__(self):
         super().__init__('detect_to_thing')  # 노드 이름 설정
@@ -42,9 +42,9 @@ class YoloPerson(Node):
         # ROS 2 subscriptions
         self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
         # 카메라 내부파라미터 구독(큐 크기 10)
-        self.create_subscription(CompressedImage, '/robot8/oakd/rgb/image_compressed', self.rgb_compressed_callback, 10)
+        self.create_subscription(CompressedImage, '/robot8/oakd/rgb/image_raw/compressed', self.rgb_compressed_callback, 10)
         # RGB 이미지 구독
-        self.create_subscription(Image, '/robot8/oakd/stereo/image_compressed', self.depth_compressed_callback, 10)
+        self.create_subscription(CompressedImage, '/robot8/oakd/stereo/image_raw/compressedDepth', self.depth_compressed_callback, 10)
         # Depth 이미지 구독
         # Periodic detection and goal logic
         self.create_timer(0.5, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
@@ -75,16 +75,38 @@ class YoloPerson(Node):
     def rgb_compressed_callback(self, msg: CompressedImage):
         try:
             # JPEG/PNG 압축 이미지를 BGR8로 디코딩
-            self.rgb_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            # self.get_logger().info(msg.format)
+            # self.rgb_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            np_arr = np.frombuffer(msg.data, np.uint8)
+            self.rgb_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             # frame_id 있으면 저장
             self.camera_frame = msg.header.frame_id or self.camera_frame
+            if self.rgb_image is None:
+                self.get_logger().error("Failed to decode depth image")
+                return
+            
         except Exception as e:
             self.get_logger().error(f"RGB(compressed) conversion failed: {e}")
 
     def depth_compressed_callback(self, msg):
         try:
-            self.depth_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='passthrough')
+            # self.depth_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='passthrough')
+                        # Step 1: 압축 헤더 정보 읽기 (12바이트)
+            depth_param_bytes = msg.data[0:12]
+            depthQuantA, depthQuantB = struct.unpack('ff', depth_param_bytes[:8])
+
+            # Step 2: 압축된 PNG 이미지 추출
+            compressed_data = msg.data[12:]
+            np_arr = np.frombuffer(compressed_data, np.uint8)
+
+            # Step 3: PNG 이미지 디코딩
+            self.depth_img = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
             # 인코딩 유지(passthrough): 16UC1(보통 mm) 또는 32FC1(보통 m)
+            self.depth = depthQuantA / (self.depth_img.astype(np.float32) + depthQuantB)
+
+            if self.depth_img is None:
+                self.get_logger().error("Failed to decode depth image")
+                return
         except Exception as e:
             self.get_logger().error(f"Depth conversion failed: {e}")
 
@@ -106,7 +128,7 @@ class YoloPerson(Node):
             if label.lower() == "car" or "bottle":               # 사람 클래스만 추적
                 u = int((x1 + x2) // 2)                 # 박스 중심 u(열)
                 v = int((y1 + y2) // 2)                 # 박스 중심 v(행)
-                z = float(self.depth_image[v, u])       # 해당 픽셀의 깊이값
+                z = float(self.depth[v, u])       # 해당 픽셀의 깊이값
                 if z == 0.0:
                     self.get_logger().warn("Depth value is 0 at detected person's center.")
                     continue                            # 깊이 무효면 다음 박스
@@ -122,7 +144,7 @@ class YoloPerson(Node):
                 pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
                 self.get_logger().info("publiser")
                 
-                # self.person_point_cam_pub.publish(pt)
+                self.person_point_cam_pub.publish(pt)
             elif label.lower() == "one":
                 main_msg = String()
                 main_msg.data = 'one'

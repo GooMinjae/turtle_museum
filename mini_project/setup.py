@@ -24,6 +24,7 @@ setup(
             'webcam = mini_project.webcam_detect_model:main',
             'main = mini_project.main_logic:main',
             'detect=mini_project.detect_publisher:main',
+            'tracker=mini_project.tracker:main',
 
         ],
     },
