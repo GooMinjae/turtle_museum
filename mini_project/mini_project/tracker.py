@@ -20,10 +20,10 @@ class tracker_node(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.close_enough_distance = 1.0
+        self.close_enough_distance = 1.5
 
         self.create_subscription(PointStamped,'/robot8/point_camera',self.callback_depth,10)
-        self.target_result = 'bottle'
+        self.target_result = 'person'
         self.create_subscription(String,'/robot8/tracking_object',self.callback_result,10)
         self.pub_water = self.create_publisher(Bool,'/robot8/is_done_track',10)
         self.latest_map_point = None
@@ -40,27 +40,29 @@ class tracker_node(Node):
     def callback_depth(self,pt):
         if self.target_result == 'person' or self.target_result == 'bottle':
             try:
-                # self.get_logger().info(f"traget_result={self.target_result}")
+                self.get_logger().info(f"traget_result={self.target_result}")
 
-                # pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
-                # self.latest_map_point = pt_map
+                pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
+                self.latest_map_point = pt_map
 
-                # # Don't send more goals if we're already close
-                # if self.block_goal_updates:
-                #     self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
+                # Don't send more goals if we're already close
+                if self.block_goal_updates:
+                    self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
                     
 
-                # self.get_logger().info(f"Detected person at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f})")
+                self.get_logger().info(f"Detected person at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f})")
 
-                # if self.goal_handle:
-                #     self.get_logger().info("Canceling previous goal...")
-                #     self.goal_handle.cancel_goal_async()
+                if self.goal_handle:
+                    self.get_logger().info("Canceling previous goal...")
+                    self.goal_handle.cancel_goal_async()
 
                 self.send_goal()
-                # if self.target_result == "bottle":
-                #     self.target_result = 'None'
-                #     self.pub_water.publish(Bool(data=True))
-                #     self.get_logger().info("traget_result=bottle")
+                if self.target_result == 'bottle':
+                    self.target_result = 'None'
+
+
+
+
 
             except Exception as e:
                 self.get_logger().warn(f"TF transform to map failed: {e}")
@@ -77,10 +79,10 @@ class tracker_node(Node):
         pose = PoseStamped()
         pose.header.frame_id = 'map'
         pose.header.stamp = self.get_clock().now().to_msg()
-        # pose.pose.position.x = self.latest_map_point.point.x
-        # pose.pose.position.y = self.latest_map_point.point.y
-        pose.pose.position.x = -2.0
-        pose.pose.position.y = 1.0
+        pose.pose.position.x = self.latest_map_point.point.x
+        pose.pose.position.y = self.latest_map_point.point.y
+        # pose.pose.position.x = -2.0
+        # pose.pose.position.y = 1.0
         pose.pose.orientation.w = 1.0
 
         goal = NavigateToPose.Goal()
@@ -97,7 +99,7 @@ class tracker_node(Node):
 
         # Require 3 close readings to trigger the lock
         if self.current_distance is not None and self.current_distance < self.close_enough_distance:
-            self.close_distance_hit_count += 1
+            self.close_distance_hit_count += 0.5
         else:
             self.close_distance_hit_count = 0
 
@@ -122,6 +124,9 @@ class tracker_node(Node):
     def goal_result_callback(self, future):
         result = future.result().result
         self.get_logger().info(f"Goal finished with result code: {future.result().status}")
+        if self.target_result == "bottle":
+            self.pub_water.publish(Bool(data=True))
+            self.get_logger().info("traget_result=bottle")
         self.goal_handle = None
 
 def main(args=None):

@@ -135,7 +135,7 @@ class YoloPerson(Node):
     def process_frame(self):
         if self.K is None or self.rgb_image is None or self.depth_image is None:
             return                                      # 준비 안 됐으면 스킵
-        results = self.model(self.rgb_image, conf = 0.5, verbose=False)[0]
+        results = self.model(self.rgb_image, conf = 0.7, verbose=False)[0]
         # YOLO 추론(첫 번째 결과만 사용)
         frame = self.rgb_image.copy()                   # 표시용 복사본
         for det in results.boxes:                       # 감지된 바운딩박스 반복
@@ -150,7 +150,7 @@ class YoloPerson(Node):
             if label.lower() == "car" or label.lower() == "bottle":   # 사람 클래스만 추적
                 u = int((x1 + x2) // 2)                 # 박스 중심 u(열)
                 v = int((y1 + y2) // 2)                 # 박스 중심 v(행)
-                z = float(self.depth[v, u])       # 해당 픽셀의 깊이값
+                z = float(self.depth_image[v, u])       # 해당 픽셀의 깊이값
                 if z == 0.0:
                     self.get_logger().warn("Depth value is 0 at detected person's center.")
                     continue                            # 깊이 무효면 다음 박스
@@ -163,6 +163,8 @@ class YoloPerson(Node):
                 pt = PointStamped()
                 pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
                 pt.header.stamp = rclpy.time.Time().to_msg()  # 최신 TF 사용(시간 0)
+                x = x/1000
+                y = y/1000
                 pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
                 self.get_logger().info(f"publiser [{label.lower()}]")
                 
