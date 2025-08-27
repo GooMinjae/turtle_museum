@@ -10,6 +10,9 @@ import time                               # 피드백 주기 제어용
 import cv2                                # OpenCV
 from std_msgs.msg import String
 import struct
+from message_filters import Subscriber, ApproximateTimeSynchronizer, TimeSynchronizer
+
+
 class YoloPerson(Node):
     def __init__(self):
         super().__init__('detect_to_thing')  # 노드 이름 설정
@@ -42,13 +45,67 @@ class YoloPerson(Node):
         # ROS 2 subscriptions
         self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
         # 카메라 내부파라미터 구독(큐 크기 10)
-        self.create_subscription(CompressedImage, '/robot8/oakd/rgb/image_raw/compressed', self.rgb_compressed_callback, 10)
+        # self.create_subscription(CompressedImage, '/robot8/oakd/rgb/image_raw/compressed', self.rgb_compressed_callback, 10)
         # RGB 이미지 구독
-        self.create_subscription(CompressedImage, '/robot8/oakd/stereo/image_raw/compressedDepth', self.depth_compressed_callback, 10)
+        # self.create_subscription(CompressedImage, '/robot8/oakd/stereo/image_raw/compressedDepth', self.depth_compressed_callback, 10)
         # Depth 이미지 구독
+        # RGB / Depth 동기화 구독 (Approximate: 슬롭 30ms)
+        self.rgb_sub   = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed')
+        self.depth_sub = Subscriber(self, CompressedImage, '/robot8/oakd/stereo/image_raw/compressedDepth')
+
+        # 정확히 같은 타임스탬프만 원하면 TimeSynchronizer()로 바꿔도 됨
+        # self.ts = TimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10)
+        self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.03)
+        self.ts.registerCallback(self.synced_rgb_depth_cb)
+
+        self.last_pair_stamp = None
+
         # Periodic detection and goal logic
         self.create_timer(0.5, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
         self.last_feedback_log_time = 0                  # 피드백 로그 간격 조절용
+
+    def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: CompressedImage):
+        try:
+            # --- RGB 디코드 ---
+            try:
+                rgb = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
+            except Exception:
+                np_arr = np.frombuffer(rgb_msg.data, np.uint8)
+                rgb = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if rgb is None:
+                self.get_logger().error("Failed to decode RGB image")
+                return
+            # --- compressedDepth 디코드 (A/(png+B)) ---
+            header = depth_msg.data[:12]
+            depthQuantA, depthQuantB = struct.unpack('<ff', header[:8])  # little-endian float32 2개
+            np_arr = np.frombuffer(depth_msg.data[12:], np.uint8)
+            depth_png = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
+            if depth_png is None:
+                self.get_logger().error("Failed to decode compressedDepth PNG")
+                return
+
+            # depth_m = depthQuantA / (depth_png.astype(np.float32) + depthQuantB)
+            # # 무효값 정리
+            # bad = ~np.isfinite(depth_m) | (depth_m <= 0.0) | (depth_m > 100.0)
+            # depth_m[bad] = 0.0
+
+            # --- 같은 페어로 상태 갱신 ---
+            self.rgb_image = rgb
+            self.depth_image = depth_png
+
+            # 프레임/타임스탬프 저장
+            if rgb_msg.header.frame_id:
+                self.camera_frame = rgb_msg.header.frame_id
+            self.last_pair_stamp = rgb_msg.header.stamp
+
+            # (옵션) 실제 시간차 로그
+            rgbs = rgb_msg.header.stamp.sec + rgb_msg.header.stamp.nanosec*1e-9
+            deps = depth_msg.header.stamp.sec + depth_msg.header.stamp.nanosec*1e-9
+            dt_ms = (deps - rgbs) * 1000.0
+            if abs(dt_ms) > 30.0:
+                self.get_logger().warn(f'RGB-Depth stamp diff = {dt_ms:.1f} ms')
+        except Exception as e:
+            self.get_logger().error(f"Sync decode failed: {e}")
 
     def camera_info_callback(self, msg):
         self.K = np.array(msg.k).reshape(3, 3)           # 9개 요소를 3x3 내참행렬로 변환
@@ -84,7 +141,6 @@ class YoloPerson(Node):
             if self.rgb_image is None:
                 self.get_logger().error("Failed to decode depth image")
                 return
-            
         except Exception as e:
             self.get_logger().error(f"RGB(compressed) conversion failed: {e}")
 
@@ -125,7 +181,7 @@ class YoloPerson(Node):
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)    # 박스 그리기
             cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 5),     # 라벨/점수 표시
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            if label.lower() == "car" or "bottle":               # 사람 클래스만 추적
+            if label.lower() == "car" or label.lower() == "bottle":   # 사람 클래스만 추적
                 u = int((x1 + x2) // 2)                 # 박스 중심 u(열)
                 v = int((y1 + y2) // 2)                 # 박스 중심 v(행)
                 z = float(self.depth[v, u])       # 해당 픽셀의 깊이값
