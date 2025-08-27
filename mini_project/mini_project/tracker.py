@@ -61,9 +61,6 @@ class tracker_node(Node):
                     self.target_result = 'None'
 
 
-
-
-
             except Exception as e:
                 self.get_logger().warn(f"TF transform to map failed: {e}")
 

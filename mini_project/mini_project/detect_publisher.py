@@ -54,10 +54,13 @@ class YoloPerson(Node):
 
         # 정확히 같은 타임스탬프만 원하면 TimeSynchronizer()로 바꿔도 됨
         # self.ts = TimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10)
-        self.ts   = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=20, slop=0.1)
+        self.ts   = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=20, slop=0.01)
         self.ts.registerCallback(self.synced_rgb_depth_cb)
 
         self.last_pair_stamp = None
+
+        self.infer_lock = threading.Lock()
+        self.last_processed_stamp = None
 
         # Periodic detection and goal logic
         self.create_timer(0.5, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
@@ -135,54 +138,66 @@ class YoloPerson(Node):
     def process_frame(self):
         if self.K is None or self.rgb_image is None or self.depth_image is None:
             return                                      # 준비 안 됐으면 스킵
-        results = self.model(self.rgb_image, conf = 0.7, verbose=False)[0]
-        # YOLO 추론(첫 번째 결과만 사용)
-        frame = self.rgb_image.copy()                   # 표시용 복사본
-        for det in results.boxes:                       # 감지된 바운딩박스 반복
-            cls = int(det.cls[0])                       # 클래스 id
-            label = self.model.names[cls]               # 클래스 이름 문자열
-            conf = float(det.conf[0])                   # 신뢰도
-            x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())  # 좌상/우하 좌표
-            # Draw box
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)    # 박스 그리기
-            cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 5),     # 라벨/점수 표시
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            if label.lower() == "car" or label.lower() == "bottle":   # 사람 클래스만 추적
-                u = int((x1 + x2) // 2)                 # 박스 중심 u(열)
-                v = int((y1 + y2) // 2)                 # 박스 중심 v(행)
-                z = float(self.depth_image[v, u])       # 해당 픽셀의 깊이값
-                if z == 0.0:
-                    self.get_logger().warn("Depth value is 0 at detected person's center.")
-                    continue                            # 깊이 무효면 다음 박스
+        if not self.infer_lock.acquire(blocking=False):
+        # 다른 추론이 아직 실행 중 → 드롭
+            return
+        
+        try:
+            # 같은 이미지(동일 타임스탬프)면 스킵해서 불필요한 중복 추론 방지
+            if self.last_pair_stamp is not None and self.last_pair_stamp == self.last_processed_stamp:
+                return
+        
+            results = self.model(self.rgb_image, conf = 0.7, verbose=False)[0]
+            # YOLO 추론(첫 번째 결과만 사용)
+            frame = self.rgb_image.copy()                   # 표시용 복사본
 
-                fx, fy = self.K[0, 0], self.K[1, 1]     # 초점거리
-                cx, cy = self.K[0, 2], self.K[1, 2]     # 주점
-                x = (u - cx) * z / fx                   # 핀홀 역투영: 카메라 좌표 x
-                y = (v - cy) * z / fy                   # 핀홀 역투영: 카메라 좌표 y
+            for det in results.boxes:                       # 감지된 바운딩박스 반복
+                cls = int(det.cls[0])                       # 클래스 id
+                label = self.model.names[cls]               # 클래스 이름 문자열
+                conf = float(det.conf[0])                   # 신뢰도
+                x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())  # 좌상/우하 좌표
+                # Draw box
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)    # 박스 그리기
+                cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 5),     # 라벨/점수 표시
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                if label.lower() == "car" or label.lower() == "bottle":   # 사람 클래스만 추적
+                    u = int((x1 + x2) // 2)                 # 박스 중심 u(열)
+                    v = int((y1 + y2) // 2)                 # 박스 중심 v(행)
+                    z = float(self.depth_image[v, u])       # 해당 픽셀의 깊이값
+                    if z == 0.0:
+                        self.get_logger().warn("Depth value is 0 at detected person's center.")
+                        continue                            # 깊이 무효면 다음 박스
 
-                pt = PointStamped()
-                pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
-                pt.header.stamp = rclpy.time.Time().to_msg()  # 최신 TF 사용(시간 0)
-                x = x/1000
-                y = y/1000
-                pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
-                self.get_logger().info(f"publiser [{label.lower()}]")
-                
-                self.person_point_cam_pub.publish(pt)
-            elif label.lower() == "one":
-                main_msg = String()
-                main_msg.data = 'one'
-                self.main_pub.publish(main_msg)
-            elif label.lower() == "five":
-                main_msg = String()
-                main_msg.data = 'five'
-                self.main_pub.publish(main_msg)
-            else:
-                main_msg = String()
-                main_msg.data = 'none'
-                self.main_pub.publish(main_msg)
-        self.display_frame = frame
+                    fx, fy = self.K[0, 0], self.K[1, 1]     # 초점거리
+                    cx, cy = self.K[0, 2], self.K[1, 2]     # 주점
+                    x = (u - cx) * z / fx                   # 핀홀 역투영: 카메라 좌표 x
+                    y = (v - cy) * z / fy                   # 핀홀 역투영: 카메라 좌표 y
 
+                    pt = PointStamped()
+                    pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
+                    pt.header.stamp = rclpy.time.Time().to_msg()  # 최신 TF 사용(시간 0)
+                    x = x/1000
+                    y = y/1000
+                    pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
+                    self.get_logger().info(f"publiser [{label.lower()}]")
+                    
+                    self.person_point_cam_pub.publish(pt)
+                elif label.lower() == "one" or label.lower() == "five":
+                    main_msg = String()
+                    main_msg.data = label.lower()
+                    self.main_pub.publish(main_msg)
+                else:
+                    main_msg = String()
+                    main_msg.data = "none"
+                    self.main_pub.publish(main_msg)
+            self.display_frame = frame.copy()
+
+            # === 추가: 이번에 처리한 스탬프 기록 ===
+            self.last_processed_stamp = self.last_pair_stamp
+        finally:
+            # === 중요: 반드시 락 해제 ===
+            self.infer_lock.release()
+            
 def main():
     rclpy.init()
     node = YoloPerson()
