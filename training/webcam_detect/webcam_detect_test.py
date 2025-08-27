@@ -24,7 +24,7 @@ import torch
 
 # train_8s_mosaic10_avg83
 # model_path = "/home/rokey/train_ws/src/detect_webcam/runs/detect/train_8s_mosaic10_avg83/weights/best.pt"
-model_path = "/home/rokey/train_ws/src/runs/detect/yolov8-custom-org_dataset5/weights/best.pt"
+model_path = "/home/rokey/turtlebot4_ws/src/mini_project/resource/best.pt"
 # 1. 모델 로드 및 GPU 설정
 model = YOLO(model_path)
 device = "cuda" if torch.cuda.is_available() else "cpu"
