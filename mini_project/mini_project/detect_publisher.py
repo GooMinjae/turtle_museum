@@ -27,7 +27,6 @@ class YoloPerson(Node):
         self.current_distance = None       # Nav2 피드백(남은 거리)
         self.block_goal_updates = False    # 가까워지면 더 이상 goal을 갱신하지 않도록 막음
 
-
         # Load YOLOv8 model
         self.model = YOLO("/home/rokey/turtlebot4_ws/src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt")
         # YOLOv8n 가중치 로드(경로는 로컬 파일)
@@ -51,7 +50,7 @@ class YoloPerson(Node):
         # Depth 이미지 구독
         # RGB / Depth 동기화 구독 (Approximate: 슬롭 30ms)
         self.rgb_sub   = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed')
-        self.depth_sub = Subscriber(self, CompressedImage, '/robot8/oakd/stereo/image_raw')
+        self.depth_sub = Subscriber(self, Image, '/robot8/oakd/stereo/image_raw')
 
         # 정확히 같은 타임스탬프만 원하면 TimeSynchronizer()로 바꿔도 됨
         # self.ts = TimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10)
@@ -67,28 +66,35 @@ class YoloPerson(Node):
     def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: Image):
         try:
             # --- RGB 디코드 ---
-            try:
-                rgb = self.bridge.compressed_imgmsg_to_cv2(rgb_msg, desired_encoding='bgr8')
-            except Exception:
-                np_arr = np.frombuffer(rgb_msg.data, np.uint8)
-                rgb = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            np_arr = np.frombuffer(rgb_msg.data, np.uint8)
+            rgb = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            depth_raw = self.bridge.imgmsg_to_cv2(depth_msg, "passthrough")  # mono16 mm
+
+            if rgb is None or depth_raw is None:
+                return
+            
+            # --- Depth [m]로 변환 ---
+            if depth_msg.encoding == "16UC1":       # 보통 mm
+                depth_raw = depth_raw.astype(np.float32) / 1000.0
+            elif depth_msg.encoding == "32FC1":     # 이미 m
+                depth_raw = depth_raw
+            else:
+                raise ValueError(f"Unexpected encoding: {depth_msg.encoding}")
+            
+            # ─ crop stereo depth to approximate RGB FOV ─
+            h, w = depth_raw.shape              # 480 × 640 expected
+            crop_x = int(0.26 * w / 2) * 2      # 26 % total width ⇒ 13 % per side
+            crop_y = int(0.18 * h / 2) * 2      # 18 % total height ⇒  9 % top/bot
+            depth_crop = depth_raw[crop_y : h - crop_y, crop_x : w - crop_x]
+            depth_aligned = cv2.resize(depth_crop, (w, h), cv2.INTER_NEAREST)
+
             if rgb is None:
                 self.get_logger().error("Failed to decode RGB image")
                 return
-            # --- compressedDepth 디코드 (A/(png+B)) ---
-            header = depth_msg.data[:12]
-            depthQuantA, depthQuantB = struct.unpack('<ff', header[:8])  # little-endian float32 2개
-            np_arr = np.frombuffer(depth_msg.data[12:], np.uint8)
-            depth_png = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
-            if depth_png is None:
-                self.get_logger().error("Failed to decode compressedDepth PNG")
-                return
-
-
-
+            
             # --- 같은 페어로 상태 갱신 ---
             self.rgb_image = rgb
-            self.depth_image = depth_png
+            self.depth_image = depth_aligned
 
             # 프레임/타임스탬프 저장
             if rgb_msg.header.frame_id:
@@ -126,43 +132,6 @@ class YoloPerson(Node):
                 time.sleep(0.01)
         cv2.destroyAllWindows()
 
-    def rgb_compressed_callback(self, msg: CompressedImage):
-        try:
-            # JPEG/PNG 압축 이미지를 BGR8로 디코딩
-            # self.get_logger().info(msg.format)
-            # self.rgb_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            np_arr = np.frombuffer(msg.data, np.uint8)
-            self.rgb_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            # frame_id 있으면 저장
-            self.camera_frame = msg.header.frame_id or self.camera_frame
-            if self.rgb_image is None:
-                self.get_logger().error("Failed to decode depth image")
-                return
-        except Exception as e:
-            self.get_logger().error(f"RGB(compressed) conversion failed: {e}")
-
-    def depth_compressed_callback(self, msg):
-        try:
-            # self.depth_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='passthrough')
-                        # Step 1: 압축 헤더 정보 읽기 (12바이트)
-            depth_param_bytes = msg.data[0:12]
-            depthQuantA, depthQuantB = struct.unpack('ff', depth_param_bytes[:8])
-
-            # Step 2: 압축된 PNG 이미지 추출
-            compressed_data = msg.data[12:]
-            np_arr = np.frombuffer(compressed_data, np.uint8)
-
-            # Step 3: PNG 이미지 디코딩
-            self.depth_img = cv2.imdecode(np_arr, cv2.IMREAD_UNCHANGED)
-            # 인코딩 유지(passthrough): 16UC1(보통 mm) 또는 32FC1(보통 m)
-            self.depth = depthQuantA / (self.depth_img.astype(np.float32) + depthQuantB)
-
-            if self.depth_img is None:
-                self.get_logger().error("Failed to decode depth image")
-                return
-        except Exception as e:
-            self.get_logger().error(f"Depth conversion failed: {e}")
-
     def process_frame(self):
         if self.K is None or self.rgb_image is None or self.depth_image is None:
             return                                      # 준비 안 됐으면 스킵
@@ -195,7 +164,7 @@ class YoloPerson(Node):
                 pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
                 pt.header.stamp = rclpy.time.Time().to_msg()  # 최신 TF 사용(시간 0)
                 pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
-                self.get_logger().info("publiser")
+                self.get_logger().info(f"publiser [{label.lower()}]")
                 
                 self.person_point_cam_pub.publish(pt)
             elif label.lower() == "one":
