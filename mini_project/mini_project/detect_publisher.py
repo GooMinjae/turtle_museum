@@ -54,7 +54,7 @@ class YoloPerson(Node):
 
         # 정확히 같은 타임스탬프만 원하면 TimeSynchronizer()로 바꿔도 됨
         # self.ts = TimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10)
-        self.ts   = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=20, slop=0.01)
+        self.ts   = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=30, slop=0.01)
         self.ts.registerCallback(self.synced_rgb_depth_cb)
 
         self.last_pair_stamp = None
