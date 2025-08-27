@@ -13,7 +13,7 @@ import math
 
 SERVICE_NAME = '/detected_cam/select'
 
-import numpy as np
+# import numpy as np
 
 # living_room
 # pose:
@@ -89,25 +89,22 @@ class MainNode(Node):
         )
 
 
-        where_car = "None"
-        ## TEST to bottle
-        where_car = "bed_room"
+        self.where_car = "None"
         # self.cli = self.create_client(Trigger, SERVICE_NAME)
         # self.get_logger().info(f'Waiting for service: {SERVICE_NAME}')
         # if not self.cli.wait_for_service(timeout_sec=5.0):
         #     raise RuntimeError(f'Service {SERVICE_NAME} not available')
 
-        while where_car == "None":
-            where_car = self.call_once()
-            self.get_logger().info(f"처음 서비스 응답: {where_car}")
+        ## TEST to bottle
+        self.where_car = "bed_room"
+
+        while self.where_car == "None":
+            self.where_car = self.call_once()
+            self.get_logger().info(f"처음 서비스 응답: {self.where_car}")
 
         self.tracking_publisher = self.create_publisher(String, '/robot8/tracking_object', 10) # QoS default
         if USE_ROBOT:
-            self.memorize_enabled = True
-            self.prev_x = self.x
-            self.prev_y = self.y
-            self.get_logger().info(f"current_pose {self.prev_x}, {self.prev_y}")
-            self.navigator.startToPose(self.goal_options[where_car])
+            self.navigator.startToPose(self.goal_options[self.where_car])
         ## Tracking Topic Pub 처리 'person' 'bottle' 'None'
         self.tracking_publisher.publish(String(data='person'))
 
@@ -143,12 +140,20 @@ class MainNode(Node):
     def cb_track_done(self, msg: Bool):
         if msg.data: # done: True
             self.get_logger().info("이전 위치로 이동")
+            self.navigator.startToPose(self.goal_options[self.where_car]) # e.g. bed_room
+            # goal_pose = self.navigator.getPoseStamped([self.prev_x, self.prev_y], TurtleBot4Directions.EAST)
+            # self.navigator.startToPose(goal_pose) # e.g. bed_room
+            self.tracking_publisher.publish(String(data='person'))
             pass
 
     ## 손모양 인식이 들어왔나?
     def cb_which_hand(self, msg: String):
         if msg.data == "one": # 물병 위치로 (kitchen)
             if USE_ROBOT:
+                self.memorize_enabled = True
+                self.prev_x = self.x
+                self.prev_y = self.y
+                self.get_logger().info(f"current_pose {self.prev_x}, {self.prev_y}")
                 self.navigator.startToPose(self.goal_options["kitchen"])
             self.tracking_publisher.publish(String(data='bottle'))
             pass
