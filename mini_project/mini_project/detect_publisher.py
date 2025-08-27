@@ -29,7 +29,8 @@ class YoloPerson(Node):
 
         # Load YOLOv8 model
         self.model = YOLO("/home/rokey/turtlebot4_ws/src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt")
-        # YOLOv8n 가중치 로드(경로는 로컬 파일)
+        print("Model loaded.")
+        #  YOLOv8n 가중치 로드(경로는 로컬 파일)
 
         self.main_pub = self.create_publisher(String, '/robot8/which_hand', 10)
 
@@ -52,9 +53,7 @@ class YoloPerson(Node):
         self.rgb_sub   = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed')
         self.depth_sub = Subscriber(self, Image, '/robot8/oakd/stereo/image_raw')
 
-        # 정확히 같은 타임스탬프만 원하면 TimeSynchronizer()로 바꿔도 됨
-        # self.ts = TimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10)
-        self.ts   = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=30, slop=0.01)
+        self.ts  = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=30, slop=0.01)
         self.ts.registerCallback(self.synced_rgb_depth_cb)
 
         self.last_pair_stamp = None
@@ -144,6 +143,7 @@ class YoloPerson(Node):
         
         try:
             # 같은 이미지(동일 타임스탬프)면 스킵해서 불필요한 중복 추론 방지
+            self.display_frame = self.rgb_image.copy()
             if self.last_pair_stamp is not None and self.last_pair_stamp == self.last_processed_stamp:
                 return
         
@@ -163,6 +163,7 @@ class YoloPerson(Node):
                 if label.lower() == "car" or label.lower() == "bottle":   # 사람 클래스만 추적
                     u = int((x1 + x2) // 2)                 # 박스 중심 u(열)
                     v = int((y1 + y2) // 2)                 # 박스 중심 v(행)
+
                     z = float(self.depth_image[v, u])       # 해당 픽셀의 깊이값
                     if z == 0.0:
                         self.get_logger().warn("Depth value is 0 at detected person's center.")
@@ -170,14 +171,12 @@ class YoloPerson(Node):
 
                     fx, fy = self.K[0, 0], self.K[1, 1]     # 초점거리
                     cx, cy = self.K[0, 2], self.K[1, 2]     # 주점
-                    x = (u - cx) * z / fx                   # 핀홀 역투영: 카메라 좌표 x
-                    y = (v - cy) * z / fy                   # 핀홀 역투영: 카메라 좌표 y
+                    x = (u - cx) * z / fx * 1000                   # 핀홀 역투영: 카메라 좌표 x
+                    y = (v - cy) * z / fy * 1000                    # 핀홀 역투영: 카메라 좌표 y
 
                     pt = PointStamped()
                     pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
                     pt.header.stamp = rclpy.time.Time().to_msg()  # 최신 TF 사용(시간 0)
-                    x = x/1000
-                    y = y/1000
                     pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
                     self.get_logger().info(f"publiser [{label.lower()}]")
                     
@@ -190,9 +189,8 @@ class YoloPerson(Node):
                     main_msg = String()
                     main_msg.data = "none"
                     self.main_pub.publish(main_msg)
-            self.display_frame = frame.copy()
-
             # === 추가: 이번에 처리한 스탬프 기록 ===
+            self.display_frame = frame
             self.last_processed_stamp = self.last_pair_stamp
         finally:
             # === 중요: 반드시 락 해제 ===
