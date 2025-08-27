@@ -51,11 +51,11 @@ class YoloPerson(Node):
         # Depth 이미지 구독
         # RGB / Depth 동기화 구독 (Approximate: 슬롭 30ms)
         self.rgb_sub   = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed')
-        self.depth_sub = Subscriber(self, CompressedImage, '/robot8/oakd/stereo/image_raw/compressedDepth')
+        self.depth_sub = Subscriber(self, CompressedImage, '/robot8/oakd/stereo/image_raw')
 
         # 정확히 같은 타임스탬프만 원하면 TimeSynchronizer()로 바꿔도 됨
         # self.ts = TimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10)
-        self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.03)
+        self.ts   = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=20, slop=0.1)
         self.ts.registerCallback(self.synced_rgb_depth_cb)
 
         self.last_pair_stamp = None
@@ -64,7 +64,7 @@ class YoloPerson(Node):
         self.create_timer(0.5, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
         self.last_feedback_log_time = 0                  # 피드백 로그 간격 조절용
 
-    def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: CompressedImage):
+    def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: Image):
         try:
             # --- RGB 디코드 ---
             try:
@@ -84,10 +84,7 @@ class YoloPerson(Node):
                 self.get_logger().error("Failed to decode compressedDepth PNG")
                 return
 
-            # depth_m = depthQuantA / (depth_png.astype(np.float32) + depthQuantB)
-            # # 무효값 정리
-            # bad = ~np.isfinite(depth_m) | (depth_m <= 0.0) | (depth_m > 100.0)
-            # depth_m[bad] = 0.0
+
 
             # --- 같은 페어로 상태 갱신 ---
             self.rgb_image = rgb

@@ -158,7 +158,7 @@ class YoloPersonNavGoal(Node):
 
         # Require 3 close readings to trigger the lock
         if self.current_distance is not None and self.current_distance < self.close_enough_distance:
-            self.close_distance_hit_count += 1
+            self.close_distance_hit_count += 0.5
         else:
             self.close_distance_hit_count = 0
 
