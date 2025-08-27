@@ -20,12 +20,12 @@ class tracker_node(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.close_enough_distance = 1.5
+        self.close_enough_distance = 2.0
 
         self.create_subscription(PointStamped,'/robot8/point_camera',self.callback_depth,10)
-        self.target_result = 'person'
+        self.target_result = 'bottle'
         self.create_subscription(String,'/robot8/tracking_object',self.callback_result,10)
-        self.pub_water = self.create_publisher(Bool,'/robot8/is_done_track',10)
+        self.pub_done = self.create_publisher(Bool,'/robot8/is_done_track',10)
         self.latest_map_point = None
         self.goal_handle = None
         self.block_goal_updates = False
@@ -41,6 +41,10 @@ class tracker_node(Node):
         if self.target_result == 'person' or self.target_result == 'bottle':
             try:
                 self.get_logger().info(f"traget_result={self.target_result}")
+                if self.target_result == 'bottle':
+                    pt.point.z = pt.point.z - 0.3
+                elif self.target_result == 'person':
+                    pt.point.z = pt.point.z - 0.7
 
                 pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
                 self.latest_map_point = pt_map
@@ -57,8 +61,7 @@ class tracker_node(Node):
                     self.goal_handle.cancel_goal_async()
 
                 self.send_goal()
-                if self.target_result == 'bottle':
-                    self.target_result = 'None'
+                self.target_result = 'None'
 
 
             except Exception as e:
@@ -80,7 +83,7 @@ class tracker_node(Node):
         pose.pose.position.y = self.latest_map_point.point.y
         # pose.pose.position.x = -2.0
         # pose.pose.position.y = 1.0
-        pose.pose.orientation.w = 1.0
+        pose.pose.orientation.z = 200.0
 
         goal = NavigateToPose.Goal()
         goal.pose = pose
@@ -96,7 +99,7 @@ class tracker_node(Node):
 
         # Require 3 close readings to trigger the lock
         if self.current_distance is not None and self.current_distance < self.close_enough_distance:
-            self.close_distance_hit_count += 0.5
+            self.close_distance_hit_count += 1
         else:
             self.close_distance_hit_count = 0
 
@@ -122,6 +125,9 @@ class tracker_node(Node):
         result = future.result().result
         self.get_logger().info(f"Goal finished with result code: {future.result().status}")
         if self.target_result == "bottle":
+            self.pub_water.publish(Bool(data=True))
+            self.get_logger().info("traget_result=bottle")
+        elif self.target_result == "person":
             self.pub_water.publish(Bool(data=True))
             self.get_logger().info("traget_result=bottle")
         self.goal_handle = None

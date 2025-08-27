@@ -136,16 +136,18 @@ class YoloPerson(Node):
 
     def process_frame(self):
         if self.K is None or self.rgb_image is None or self.depth_image is None:
+            self.get_logger().error("1")
             return                                      # 준비 안 됐으면 스킵
         if not self.infer_lock.acquire(blocking=False):
+            self.get_logger().error("2")
+
         # 다른 추론이 아직 실행 중 → 드롭
             return
         
         try:
             # 같은 이미지(동일 타임스탬프)면 스킵해서 불필요한 중복 추론 방지
             self.display_frame = self.rgb_image.copy()
-            if self.last_pair_stamp is not None and self.last_pair_stamp == self.last_processed_stamp:
-                return
+
         
             results = self.model(self.rgb_image, conf = 0.7, verbose=False)[0]
             # YOLO 추론(첫 번째 결과만 사용)
@@ -171,8 +173,8 @@ class YoloPerson(Node):
 
                     fx, fy = self.K[0, 0], self.K[1, 1]     # 초점거리
                     cx, cy = self.K[0, 2], self.K[1, 2]     # 주점
-                    x = (u - cx) * z / fx * 1000                   # 핀홀 역투영: 카메라 좌표 x
-                    y = (v - cy) * z / fy * 1000                    # 핀홀 역투영: 카메라 좌표 y
+                    x = (u - cx) * z / (fx * 1000)                   # 핀홀 역투영: 카메라 좌표 x
+                    y = (v - cy) * z / (fy * 1000)                    # 핀홀 역투영: 카메라 좌표 y
 
                     pt = PointStamped()
                     pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
