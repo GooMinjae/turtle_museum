@@ -62,7 +62,7 @@ class YoloPerson(Node):
         self.last_processed_stamp = None
 
         # Periodic detection and goal logic
-        self.create_timer(0.5, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
+        self.create_timer(0.2, self.process_frame)       # 0.5초마다 감지/목표 갱신 로직 실행
         self.last_feedback_log_time = 0                  # 피드백 로그 간격 조절용
 
     def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: Image):
@@ -146,10 +146,9 @@ class YoloPerson(Node):
         
         try:
             # 같은 이미지(동일 타임스탬프)면 스킵해서 불필요한 중복 추론 방지
-            self.display_frame = self.rgb_image.copy()
+            self.display_frame = self.rgb_image.copy()  
 
-        
-            results = self.model(self.rgb_image, conf = 0.7, verbose=False)[0]
+            results = self.model.track(self.rgb_image, conf=0.7, persist=True, tracker='bytetrack.yaml', verbose=False)[0]
             # YOLO 추론(첫 번째 결과만 사용)
             frame = self.rgb_image.copy()                   # 표시용 복사본
 
