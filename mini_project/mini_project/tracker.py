@@ -11,7 +11,7 @@ import numpy as np
 import time
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+
 class tracker_node(Node):
     def __init__(self):
         super().__init__('tracker_node')
@@ -20,17 +20,19 @@ class tracker_node(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.close_enough_distance = 2.0
+        self.close_enough_distance = 1.0
 
         self.create_subscription(PointStamped,'/robot8/point_camera',self.callback_depth,10)
         self.target_result = 'bottle'
         self.create_subscription(String,'/robot8/tracking_object',self.callback_result,10)
         self.pub_water = self.create_publisher(Bool,'/robot8/is_done_track',10)
-
+        self.latest_map_point = None
         self.goal_handle = None
         self.block_goal_updates = False
         self.close_distance_hit_count = 0
-        self.last_feedback_log_time = time.time()
+        self.last_feedback_log_time = 0
+        # self.create_timer(0.5, self.process_frame)
+
     def callback_result(self,msg):
         self.target_result = msg.data
         
@@ -64,7 +66,12 @@ class tracker_node(Node):
                 self.get_logger().warn(f"TF transform to map failed: {e}")
 
 
-
+    # def process_frame(self):
+        # self.send_goal()
+        # if self.target_result == "bottle":
+        #     self.target_result = 'None'
+        #     self.pub_water.publish(Bool(data=True))
+        #     self.get_logger().info("traget_result=bottle")
 
     def send_goal(self):
         pose = PoseStamped()
