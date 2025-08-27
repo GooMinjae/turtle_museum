@@ -53,7 +53,7 @@ class YoloPerson(Node):
         self.rgb_sub   = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed')
         self.depth_sub = Subscriber(self, Image, '/robot8/oakd/stereo/image_raw')
 
-        self.ts  = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=30, slop=0.01)
+        self.ts  = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=2, slop=0.03)
         self.ts.registerCallback(self.synced_rgb_depth_cb)
 
         self.last_pair_stamp = None
@@ -140,17 +140,22 @@ class YoloPerson(Node):
             return                                      # 준비 안 됐으면 스킵
         if not self.infer_lock.acquire(blocking=False):
             self.get_logger().error("2")
-
         # 다른 추론이 아직 실행 중 → 드롭
             return
         
         try:
             # 같은 이미지(동일 타임스탬프)면 스킵해서 불필요한 중복 추론 방지
-            self.display_frame = self.rgb_image.copy()  
+            stamp = self.last_pair_stamp
+
+            if stamp is not None and stamp == self.last_processed_stamp:
+                return
 
             results = self.model.track(self.rgb_image, conf=0.7, persist=True, tracker='bytetrack.yaml', verbose=False)[0]
             # YOLO 추론(첫 번째 결과만 사용)
             frame = self.rgb_image.copy()                   # 표시용 복사본
+
+            if self.last_pair_stamp != stamp:
+                return
 
             for det in results.boxes:                       # 감지된 바운딩박스 반복
                 cls = int(det.cls[0])                       # 클래스 id
@@ -192,7 +197,7 @@ class YoloPerson(Node):
                     self.main_pub.publish(main_msg)
             # === 추가: 이번에 처리한 스탬프 기록 ===
             self.display_frame = frame
-            self.last_processed_stamp = self.last_pair_stamp
+            self.last_processed_stamp = stamp
         finally:
             # === 중요: 반드시 락 해제 ===
             self.infer_lock.release()
