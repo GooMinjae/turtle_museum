@@ -106,7 +106,7 @@ class MainNode(Node):
         if not self.cli.wait_for_service(timeout_sec=5.0):
             raise RuntimeError(f'Service {SERVICE_NAME} not available')
 
-        while not where_car == "None":
+        while where_car == "None":
             where_car = self.call_once()
             self.get_logger().info(f"처음 서비스 응답: {where_car}")
 
@@ -126,6 +126,7 @@ class MainNode(Node):
     def call_once(self):
         req = Trigger.Request()
         future = self.cli.call_async(req)
+        self.get_logger().info("CALL_ONCE")
         rclpy.spin_until_future_complete(self, future, timeout_sec=3.0)
         if not future.done():
             raise TimeoutError('Service call timed out')

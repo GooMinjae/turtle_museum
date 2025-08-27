@@ -56,6 +56,7 @@ class DualUSBCamYOLOPublisher(Node):
 
         # 서비스: 선택 결과 반환
         self.srv = self.create_service(Trigger, '/detected_cam/select', self.on_select_request)
+        self.get_logger().info("CREATE SERVICE")
 
         # 카메라
         self.cap0 = open_cam(IDX0)
@@ -73,7 +74,7 @@ class DualUSBCamYOLOPublisher(Node):
         self.last_choice = "none"  # "cam0" | "cam1" | "none"
 
         # 타이머
-        period = 2.0 / FPS
+        period = 1.0 / FPS
         self.timer = self.create_timer(period, self.tick)
 
         # self.get_logger().info(
@@ -168,7 +169,7 @@ class DualUSBCamYOLOPublisher(Node):
             'cam0':'kitchen',
             'cam1':'bed_room'
         }
-        self.get_logger().info("Get Request")
+        # self.get_logger().info("Get Request")
         if self.last_choice == "none":
             response.success = False
             # response.message = f'none (cam0={self.last_c0:.3f}, cam1={self.last_c1:.3f})'
