@@ -48,8 +48,8 @@ class DualUSBCamYOLOPublisher(Node):
         self.bridge = CvBridge()
 
         # 탐지 결과 이미지 퍼블리셔
-        # self.pub0_det = self.create_publisher(Image, '/cam0/detect/image', 10)
-        # self.pub1_det = self.create_publisher(Image, '/cam1/detect/image', 10)
+        self.pub0_det = self.create_publisher(Image, '/cam0/detect/image', 10)
+        self.pub1_det = self.create_publisher(Image, '/cam1/detect/image', 10)
 
         # (옵션) 현재 상태 브로드캐스트
         self.pub_detected_cam = self.create_publisher(String, '/detected_cam', 10)
@@ -73,13 +73,13 @@ class DualUSBCamYOLOPublisher(Node):
         self.last_choice = "none"  # "cam0" | "cam1" | "none"
 
         # 타이머
-        period = 2.0 / FPS
+        period = 1.0 / FPS
         self.timer = self.create_timer(period, self.tick)
 
-        # self.get_logger().info(
-        #     f'YOLO loaded: {MODEL_PATH}, device={DEVICE}, conf={CONF_THRES}\n'
-        #     f'Publishing /cam0/detect/image, /cam1/detect/image; Service: /detected_cam/select'
-        # )
+        self.get_logger().info(
+            f'YOLO loaded: {MODEL_PATH}, device={DEVICE}, conf={CONF_THRES}\n'
+            f'Publishing /cam0/detect/image, /cam1/detect/image; Service: /detected_cam/select'
+        )
 
     def decide_choice(self, det0: bool, det1: bool, c0: float, c1: float) -> str:
         """
@@ -136,12 +136,12 @@ class DualUSBCamYOLOPublisher(Node):
         msg0_det = self.bridge.cv2_to_imgmsg(vis0, encoding='bgr8')
         msg0_det.header.stamp = now
         msg0_det.header.frame_id = 'cam0_frame'
-        # self.pub0_det.publish(msg0_det)
+        self.pub0_det.publish(msg0_det)
 
         msg1_det = self.bridge.cv2_to_imgmsg(vis1, encoding='bgr8')
         msg1_det.header.stamp = now
         msg1_det.header.frame_id = 'cam1_frame'
-        # self.pub1_det.publish(msg1_det)
+        self.pub1_det.publish(msg1_det)
 
         # 상태 브로드캐스트(문자열)
         s = String()
@@ -154,8 +154,7 @@ class DualUSBCamYOLOPublisher(Node):
         self.last_choice = choice
 
         # (선택) 로그
-        # self.get_logger().info(f'cam0: n={n0}, max_conf={c0:.3f} | cam1: n={n1}, max_conf={c1:.3f} -> choice={choice}')
-
+        self.get_logger().info(f'cam0: n={n0}, max_conf={c0:.3f} | cam1: n={n1}, max_conf={c1:.3f} -> choice={choice}')
 
     # -------- 서비스 콜백 --------
     def on_select_request(self, request, response):
@@ -164,24 +163,16 @@ class DualUSBCamYOLOPublisher(Node):
         success: 선택 가능 여부 (none이면 False)
         message: "cam0|cam1|none max_conf=.. (cam0=.., cam1=..)"
         """
-        cam_room_match = {
-            'cam0':'kitchen',
-            'cam1':'bed_room'
-        }
-        self.get_logger().info("Get Request")
         if self.last_choice == "none":
             response.success = False
-            # response.message = f'none (cam0={self.last_c0:.3f}, cam1={self.last_c1:.3f})'
-            response.message = 'None'
+            response.message = f'none (cam0={self.last_c0:.3f}, cam1={self.last_c1:.3f})'
         else:
             max_conf = max(self.last_c0, self.last_c1)
             response.success = True
-            # response.message = (
-            #     f'{self.last_choice} max_conf={max_conf:.3f} '
-            #     f'(cam0={self.last_c0:.3f}, cam1={self.last_c1:.3f})'
-            # )
-            response.message = f'{cam_room_match[self.last_choice]}'
-            
+            response.message = (
+                f'{self.last_choice} max_conf={max_conf:.3f} '
+                f'(cam0={self.last_c0:.3f}, cam1={self.last_c1:.3f})'
+            )
         return response
 
     def destroy_node(self):

@@ -9,49 +9,9 @@ from std_srvs.srv import Trigger
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
+SERVICE_NAME = '/detected_cam/select'
+
 import numpy as np
-
-
-class MainNode(Node):
-    def __init__(self):
-        super().__init__('main_node')
-
-        self.navigator = TurtleBot4Navigator()
-
-        # Start on dock
-        # if not self.navigator.getDockedStatus():
-        #     self.navigator.info('Docking before intialising pose')
-        #     self.navigator.dock()
-
-        # Set initial pose
-        # initial_pose = self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.NORTH)
-        # self.navigator.setInitialPose(initial_pose)
-
-        # Wait for Nav2
-        # self.navigator.waitUntilNav2Active()
-
-        # Undock
-        # self.navigator.undock()
-
-        # Prepare goal pose options
-        self.goal_options = {
-            'home': self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH),
-            # 'living_room': self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.EAST),
-            'living_room': self.navigator.getPoseStamped([-2.09, -0.24], np.degrees(0.56)),
-            'kitchen': self.navigator.getPoseStamped([-2.09, 0.58], np.degrees(0.74)),
-            'bed_room': self.navigator.getPoseStamped([-0.59, 2.21], np.degrees(-0.57)),
-            'Exit': None
-        }
-
-        # TEST
-        goal_pose = []
-        goal_pose.append(self.goal_options['living_room'])
-        goal_pose.append(self.goal_options['kitchen'])
-        goal_pose.append(self.goal_options['bed_room'])
-        goal_pose.append(self.goal_options['home'])
-        self.navigator.startFollowWaypoints(goal_pose)
-
-        # self.navigator.dock()
 
 # living_room
 # pose:
@@ -92,24 +52,68 @@ class MainNode(Node):
 #       z: -0.5780426432258742
 #       w: 0.8160065579469595
 
-############3333
-        # self.navigator.info('Welcome to the mail delivery service.')
+        # # TEST
+        # goal_pose = []
+        # goal_pose.append(self.goal_options['living_room'])
+        # # goal_pose.append(self.goal_options['kitchen'])
+        # # goal_pose.append(self.goal_options['bed_room'])
+        # goal_pose.append(self.goal_options['home'])
+        # self.navigator.startFollowWaypoints(goal_pose)
 
-        ## webcams request 처리
-        self.cli_push_once = self.create_client(
-            Trigger, '/yolo_dual_cam/push_once_and_exit'
-        )
-        if not self.cli_push_once.service_is_ready():
-            self.get_logger().warn(
-                "[push_once_and_exit] service not ready yet. Will call when available."
-            )
+        # self.navigator.dock()
 
-        # (예시) 부팅 후 3초 뒤 한 번 호출해보기
-        # self.create_timer(3.0, self._once_call_push_and_cancel_timer)
+USE_ROBOT = False
 
+class MainNode(Node):
+    def __init__(self):
+        super().__init__('main_node')
+
+        if USE_ROBOT:
+            self.navigator = TurtleBot4Navigator()
+
+            # Start on dock
+            if not self.navigator.getDockedStatus():
+                self.navigator.info('Docking before intialising pose')
+                self.navigator.dock()
+
+            # Set initial pose
+            initial_pose = self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH) # undock pose 
+            self.navigator.setInitialPose(initial_pose)
+            self.get_logger().info("set initial pose")
+
+            # Wait for Nav2
+            self.navigator.waitUntilNav2Active()
+            self.get_logger().info("NAV2")
+
+            # Undock
+            # self.navigator.undock()
+
+            # Prepare goal pose options
+            self.goal_options = {
+                'home': self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH),
+                # 'living_room': self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.EAST),
+                'living_room': self.navigator.getPoseStamped([-2.09, -0.24], np.rad2deg(0.56)),
+                # 'living_room': self.navigator.getPoseStamped([-2.09, -0.24], TurtleBot4Directions.WEST),
+                'kitchen': self.navigator.getPoseStamped([-2.09, 0.58], np.rad2deg(0.74)),
+                'bed_room': self.navigator.getPoseStamped([-0.59, 2.21], np.rad2deg(-0.57)),
+                'Exit': None
+            }
+
+
+        where_car = "None"
+        self.cli = self.create_client(Trigger, SERVICE_NAME)
+        self.get_logger().info(f'Waiting for service: {SERVICE_NAME}')
+        if not self.cli.wait_for_service(timeout_sec=5.0):
+            raise RuntimeError(f'Service {SERVICE_NAME} not available')
+
+        while not where_car == "None":
+            where_car = self.call_once()
+            self.get_logger().info(f"처음 서비스 응답: {where_car}")
+
+        if USE_ROBOT:
+            self.navigator.startToPose(self.goal_options[where_car])
         ## Tracking Topic Pub 처리
-        self.publisher = self.create_publisher(String, '/robot8/tracking_object', 10) # QoS default
-        timer_period = 0.5  # seconds
+        self.tracking_publisher = self.create_publisher(String, '/robot8/tracking_object', 10) # QoS default
 
         self.subscription = self.create_subscription(
             Bool, '/robot8/is_done_track', self.cb_track_done, 10)
@@ -118,23 +122,18 @@ class MainNode(Node):
             String, '/robot8/which_hand', self.cb_which_hand, 10
         )
 
-    def on_service_done(self, future):
-        try:
-            resp = future.result()
-            self.get_logger().info(f"Service response: success={resp.success}, msg='{resp.message}'")
-        except Exception as e:
-            self.get_logger().error(f'Service call failed: {e}')
 
-    ## RC car (사람) 위치 response
-    def on_service_pose(self, msg: Trigger):
-        # 여기서 이미지를 파일로 저장/전처리/전송 등 필요 작업 수행
-        self.where_car = msg
-        # if self.where_car == "living_room":
-        #     self.navigator.startToPose(self.goal_options[1]['pose'])
-        # elif self.where_car == "kitchen":
-        #     self.navigator.startToPose(self.goal_options[1]['pose'])
-        # self.navigator.startToPose(self.goal_options[self.where_car])
-        self.get_logger().info(f"get msg {msg.data}")
+    def call_once(self):
+        req = Trigger.Request()
+        future = self.cli.call_async(req)
+        rclpy.spin_until_future_complete(self, future, timeout_sec=3.0)
+        if not future.done():
+            raise TimeoutError('Service call timed out')
+        resp = future.result()
+        # resp.success: bool, resp.message: string ("cam0|cam1|none ..." 형식)
+        where_car = resp.message
+        self.get_logger().info(f'Service response: success={resp.success}, message="{where_car}"')
+        return where_car
 
     ## Tracking 완료 되었나?
     def cb_track_done(self, msg: Bool):
@@ -144,11 +143,14 @@ class MainNode(Node):
     ## 손모양 인식이 들어왔나?
     def cb_which_hand(self, msg: String):
         if msg == "one": # 물병 위치로 (kitchen)
-            self.navigator.startToPose(self.goal_options["kitchen"])
+            if USE_ROBOT:
+                self.navigator.startToPose(self.goal_options["kitchen"])
+            self.tracking_publisher.publish('bottle')
             pass
         elif msg == "five":
-            self.navigator.startToPose(self.goal_options["home"])
-            self.publisher.publish('None')
+            if USE_ROBOT:
+                self.navigator.startToPose(self.goal_options["home"])
+            self.tracking_publisher.publish('None')
             ### finish logic
             pass
 
