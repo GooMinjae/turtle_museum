@@ -66,22 +66,23 @@ class YoloPerson(Node):
         self.last_feedback_log_time = 0                  # 피드백 로그 간격 조절용
 
     def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: Image):
-        try:
+        # try:
             # --- RGB 디코드 ---
             np_arr = np.frombuffer(rgb_msg.data, np.uint8)
             rgb = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
             depth_raw = self.bridge.imgmsg_to_cv2(depth_msg, "passthrough")  # mono16 mm
 
             if rgb is None or depth_raw is None:
+                self.get_logger().error("Failed to decode RGB or Depth image")
                 return
             
-            # --- Depth [m]로 변환 ---
-            if depth_msg.encoding == "16UC1":       # 보통 mm
-                depth_raw = depth_raw.astype(np.float32) / 1000.0
-            elif depth_msg.encoding == "32FC1":     # 이미 m
-                depth_raw = depth_raw
-            else:
-                raise ValueError(f"Unexpected encoding: {depth_msg.encoding}")
+            # # --- Depth [m]로 변환 ---
+            # if depth_msg.encoding == "16UC1":       # 보통 mm
+            #     depth_raw = depth_raw.astype(np.float32) / 1000.0
+            # elif depth_msg.encoding == "32FC1":     # 이미 m
+            #     depth_raw = depth_raw
+            # else:
+            #     raise ValueError(f"Unexpected encoding: {depth_msg.encoding}")
             
             # ─ crop stereo depth to approximate RGB FOV ─
             h, w = depth_raw.shape              # 480 × 640 expected
@@ -90,27 +91,27 @@ class YoloPerson(Node):
             depth_crop = depth_raw[crop_y : h - crop_y, crop_x : w - crop_x]
             depth_aligned = cv2.resize(depth_crop, (w, h), cv2.INTER_NEAREST)
 
-            if rgb is None:
-                self.get_logger().error("Failed to decode RGB image")
-                return
+            # if rgb is None:
+            #     self.get_logger().error("Failed to decode RGB image")
+            #     return
             
             # --- 같은 페어로 상태 갱신 ---
             self.rgb_image = rgb
             self.depth_image = depth_aligned
 
-            # 프레임/타임스탬프 저장
-            if rgb_msg.header.frame_id:
-                self.camera_frame = rgb_msg.header.frame_id
-            self.last_pair_stamp = rgb_msg.header.stamp
+            # # 프레임/타임스탬프 저장
+            # if rgb_msg.header.frame_id:
+            #     self.camera_frame = rgb_msg.header.frame_id
+            # self.last_pair_stamp = rgb_msg.header.stamp
 
-            # (옵션) 실제 시간차 로그
-            rgbs = rgb_msg.header.stamp.sec + rgb_msg.header.stamp.nanosec*1e-9
-            deps = depth_msg.header.stamp.sec + depth_msg.header.stamp.nanosec*1e-9
-            dt_ms = (deps - rgbs) * 1000.0
-            if abs(dt_ms) > 30.0:
-                self.get_logger().warn(f'RGB-Depth stamp diff = {dt_ms:.1f} ms')
-        except Exception as e:
-            self.get_logger().error(f"Sync decode failed: {e}")
+        #     # (옵션) 실제 시간차 로그
+        #     rgbs = rgb_msg.header.stamp.sec + rgb_msg.header.stamp.nanosec*1e-9
+        #     deps = depth_msg.header.stamp.sec + depth_msg.header.stamp.nanosec*1e-9
+        #     dt_ms = (deps - rgbs) * 1000.0
+        #     if abs(dt_ms) > 30.0:
+        #         self.get_logger().warn(f'RGB-Depth stamp diff = {dt_ms:.1f} ms')
+        # except Exception as e:
+        #     self.get_logger().error(f"Sync decode failed: {e}")
 
     def camera_info_callback(self, msg):
         self.K = np.array(msg.k).reshape(3, 3)           # 9개 요소를 3x3 내참행렬로 변환
@@ -183,7 +184,9 @@ class YoloPerson(Node):
                     pt = PointStamped()
                     pt.header.frame_id = self.camera_frame  # 점의 원래 프레임(여기선 RGB 프레임)
                     pt.header.stamp = rclpy.time.Time().to_msg()  # 최신 TF 사용(시간 0)
-                    pt.point.x, pt.point.y, pt.point.z = x, y, z  # 카메라 좌표계 점
+                    z = z/1000  # 카메라 좌표계 점
+                    pt.point.x, pt.point.y, pt.point.z = x, y, z
+
                     self.get_logger().info(f"publiser [{label.lower()}]")
                     
                     self.person_point_cam_pub.publish(pt)
