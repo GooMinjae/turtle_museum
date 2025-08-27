@@ -23,7 +23,7 @@ class tracker_node(Node):
         self.close_enough_distance = 2.0
 
         self.create_subscription(PointStamped,'/robot8/point_camera',self.callback_depth,10)
-        self.target_result = 'bottle'
+        self.target_result = 'None'
         self.create_subscription(String,'/robot8/tracking_object',self.callback_result,10)
         self.pub_done = self.create_publisher(Bool,'/robot8/is_done_track',10)
         self.latest_map_point = None
@@ -129,7 +129,7 @@ class tracker_node(Node):
             self.get_logger().info("traget_result=bottle")
         elif self.target_result == "person":
             self.pub_water.publish(Bool(data=True))
-            self.get_logger().info("traget_result=bottle")
+            self.get_logger().info("traget_result=person")
         self.goal_handle = None
 
 def main(args=None):
