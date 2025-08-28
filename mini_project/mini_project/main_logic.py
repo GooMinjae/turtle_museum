@@ -10,6 +10,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 from geometry_msgs.msg import PoseWithCovarianceStamped
 import math
+import time
 
 SERVICE_NAME = '/detected_cam/select'
 
@@ -53,14 +54,14 @@ class MainNode(Node):
             #     self.navigator.info('Docking before intialising pose')
             #     self.navigator.dock()
 
-            # Set initial pose
-            initial_pose = self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH) # undock pose 
-            self.navigator.setInitialPose(initial_pose)
-            self.get_logger().info("set initial pose")
+            # # Set initial pose
+            # initial_pose = self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH) # undock pose 
+            # self.navigator.setInitialPose(initial_pose)
+            # self.get_logger().info("set initial pose")
 
-            # Wait for Nav2
-            self.navigator.waitUntilNav2Active()
-            self.get_logger().info("NAV2")
+            # # Wait for Nav2
+            # self.navigator.waitUntilNav2Active()
+            # self.get_logger().info("NAV2")
 
             # Undock
             # self.navigator.undock()
@@ -90,13 +91,14 @@ class MainNode(Node):
 
 
         self.where_car = "None"
-        # self.cli = self.create_client(Trigger, SERVICE_NAME)
-        # self.get_logger().info(f'Waiting for service: {SERVICE_NAME}')
-        # if not self.cli.wait_for_service(timeout_sec=5.0):
-        #     raise RuntimeError(f'Service {SERVICE_NAME} not available')
+        self.cli = self.create_client(Trigger, SERVICE_NAME)
+        self.get_logger().info("Start to service")
+        self.get_logger().info(f'Waiting for service: {SERVICE_NAME}')
+        if not self.cli.wait_for_service(timeout_sec=5.0):
+            raise RuntimeError(f'Service {SERVICE_NAME} not available')
 
         ## TEST to bottle
-        self.where_car = "bed_room"
+        # self.where_car = "bed_room"
 
         while self.where_car == "None":
             self.where_car = self.call_once()
@@ -105,6 +107,7 @@ class MainNode(Node):
         self.tracking_publisher = self.create_publisher(String, '/robot8/tracking_object', 10) # QoS default
         if USE_ROBOT:
             self.navigator.startToPose(self.goal_options[self.where_car])
+            time.sleep(1.0)
         ## Tracking Topic Pub 처리 'person' 'bottle' 'None'
         self.tracking_publisher.publish(String(data='person'))
 
@@ -143,6 +146,7 @@ class MainNode(Node):
             self.navigator.startToPose(self.goal_options[self.where_car]) # e.g. bed_room
             # goal_pose = self.navigator.getPoseStamped([self.prev_x, self.prev_y], TurtleBot4Directions.EAST)
             # self.navigator.startToPose(goal_pose) # e.g. bed_room
+            time.sleep(1.0)
             self.tracking_publisher.publish(String(data='person'))
             pass
 
@@ -155,6 +159,7 @@ class MainNode(Node):
                 self.prev_y = self.y
                 self.get_logger().info(f"current_pose {self.prev_x}, {self.prev_y}")
                 self.navigator.startToPose(self.goal_options["kitchen"])
+                time.sleep(1.0)
             self.tracking_publisher.publish(String(data='bottle'))
             pass
         elif msg.data == "five":
@@ -162,6 +167,8 @@ class MainNode(Node):
                 self.navigator.startToPose(self.goal_options["home"])
             self.tracking_publisher.publish(String(data='None'))
             ### finish logic
+            self.navigator.dock()
+
             pass
 
 def main(args=None):

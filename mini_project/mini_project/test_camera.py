@@ -10,4 +10,22 @@ def list_available_cameras(max_index=10):
         else:
             print(f"❌ 사용 불가: 인덱스 {i}")
 
-list_available_cameras()
+# list_available_cameras()
+import cv2
+
+cap = cv2.VideoCapture(2)  # 기본 카메라: 0
+if not cap.isOpened():
+    raise RuntimeError("카메라를 열 수 없습니다. 인덱스/권한/점유 상태를 확인하세요.")
+
+while True:
+    ok, frame = cap.read()
+    if not ok:
+        print("프레임을 읽지 못했습니다.")
+        break
+
+    cv2.imshow("Webcam", frame)     # 화면 표시 (BGR)
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()

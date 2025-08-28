@@ -12,7 +12,7 @@ import numpy as np
 # ========= 설정 =========
 W, H   = 640, 480
 FPS    = 20.0
-IDX0, IDX1 = 2, 4  # 사용중인 /dev/video 인덱스에 맞게
+IDX0, IDX1 = 2, 0  # 사용중인 /dev/video 인덱스에 맞게 -- kitchen, bed_room 순서
 MODEL_PATH = "/home/rokey/turtlebot4_ws/src/mini_project/resource/best.pt"
 CONF_THRES = 0.7
 DEVICE     = 0     # GPU: 0, CPU: "cpu"
@@ -155,7 +155,7 @@ class DualUSBCamYOLOPublisher(Node):
         self.last_choice = choice
 
         # (선택) 로그
-        # self.get_logger().info(f'cam0: n={n0}, max_conf={c0:.3f} | cam1: n={n1}, max_conf={c1:.3f} -> choice={choice}')
+        self.get_logger().info(f'cam0: n={n0}, max_conf={c0:.3f} | cam1: n={n1}, max_conf={c1:.3f} -> choice={choice}')
 
 
     # -------- 서비스 콜백 --------
