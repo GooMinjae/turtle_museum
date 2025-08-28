@@ -102,7 +102,7 @@ class tracker_node(Node):
         goal = NavigateToPose.Goal()
         goal.pose = self.pose
 
-        self.get_logger().info(f"Sending goal to: ({pose.pose.position.x:.2f}, {pose.pose.position.y:.2f})")
+        self.get_logger().info(f"Sending goal to: ({self.pose.pose.position.x:.2f}, {self.pose.pose.position.y:.2f})")
         self.action_client.wait_for_server()
         self._send_goal_future = self.action_client.send_goal_async(goal, feedback_callback=self.feedback_callback)
         self._send_goal_future.add_done_callback(self.goal_response_callback)
