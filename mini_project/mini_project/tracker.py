@@ -28,7 +28,7 @@ class tracker_node(Node):
         self.pub_done = self.create_publisher(Bool,'/robot8/is_done_track',10)
         self.latest_map_point = None
         self.goal_handle = None
-        self.block_goal_updates = False
+        self.block_goal_updates = True
         self.result_bottle = False
 
         self.close_distance_hit_count = 0
@@ -50,11 +50,13 @@ class tracker_node(Node):
                 self.get_logger().info(f"traget_result={self.target_result}")
                 if self.target_result == 'bottle':
                     pt.point.z = pt.point.z - 0.3
-                    self.pose.pose.orientation.z = 180.0
+                    # self.pose.pose.orientation.z = 180.0
+
 
                 elif self.target_result == 'person':
-                    pt.point.z = 0.
-                    self.pose.pose.orientation.z = 270.0
+                    pt.point.z = pt.point.z - 0.3
+                    # self.pose.pose.orientation.z = 180.0
+
 
 
                 pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
@@ -76,7 +78,8 @@ class tracker_node(Node):
                     self.result_bottle = True
                 
 
-                self.target_result = 'None'
+                # self.target_result = 'None'  # 연속적인 tracking
+
 
 
             except Exception as e:
@@ -96,6 +99,8 @@ class tracker_node(Node):
         self.pose.header.stamp = self.get_clock().now().to_msg()
         self.pose.pose.position.x = self.latest_map_point.point.x
         self.pose.pose.position.y = self.latest_map_point.point.y
+        self.pose.pose.orientation.w = 1.0
+
         # pose.pose.position.x = -2.0
         # pose.pose.position.y = 1.0
 
@@ -139,9 +144,13 @@ class tracker_node(Node):
         result = future.result().result
         self.get_logger().info(f"Goal finished with result code: {future.result().status}")
         if self.result_bottle:
+            time.sleep(1)
             self.pub_done.publish(Bool(data=True))
             self.get_logger().info("pub_True")
             self.result_bottle = False
+            # self.pose = PoseStamped()
+
+
 
         self.goal_handle = None
 

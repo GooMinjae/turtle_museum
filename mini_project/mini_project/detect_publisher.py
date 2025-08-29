@@ -185,7 +185,7 @@ class YoloPerson(Node):
 
             self.display_frame = frame
             self.last_processed_stamp = pair.stamp
-            self.get_logger().info("Camera intrinsics received")
+            # self.get_logger().info("Camera intrinsics received")
 
 
         finally:
