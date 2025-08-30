@@ -71,10 +71,10 @@
      <widget class="QLabel" name="barcode_cam_label">
       <property name="geometry">
        <rect>
-        <x>130</x>
-        <y>90</y>
+        <x>120</x>
+        <y>50</y>
         <width>531</width>
-        <height>221</height>
+        <height>251</height>
        </rect>
       </property>
       <property name="text">

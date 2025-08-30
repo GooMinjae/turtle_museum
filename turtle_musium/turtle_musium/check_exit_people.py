@@ -52,7 +52,6 @@ class ExitPeopleWorker(Node):
         while self.running:
             ret, frame = self.cap.read()
             if not ret:
-                self.errorOccurred.emit("카메라를 열 수 없습니다.")
                 break
 
             frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)

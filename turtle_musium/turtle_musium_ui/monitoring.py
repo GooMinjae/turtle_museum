@@ -10,8 +10,8 @@ from rclpy.node import Node
 # from PyQt5.QtCore import pyqtSignal
 
 from ament_index_python.resources import get_resource
-from PyQt5 import loadUi
-from PyQt5.QtCore import Qt, QTimer, Signal, QThread
+from PyQt5.uic import loadUi
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtWidgets import QMainWindow, QApplication, QStackedWidget
 
@@ -21,57 +21,51 @@ from std_msgs.msg import Bool
 
 from rclpy.executors import MultiThreadedExecutor
 
-from voice_processing.tts import say, say_async
+# from voice_processing.tts import say, say_async
 
 from sensor_msgs.msg import Image, CameraInfo
 
 
 class WindowClass(QMainWindow):
-    voice_signal = Signal(bool)
-    qr_check_signal = Signal(list, bool, bool)
-    order_done_signal = Signal()
+    voice_signal = pyqtSignal(bool)
+    qr_check_signal = pyqtSignal(list, bool, bool)
+    order_done_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         rclpy.init(args=None)
         self.node = rclpy.create_node("window")
 
-        # self.get_color_frame = None
-        self.latest_frame = None
-        self.switch_mp = True
-        self.frame_count = 0
-        self.item_price = {'진로': 5000,'콜라': 2000, '죠리퐁': 1500, '칸쵸': 1200, '이오니아': 4500, '믹스믹스': 4500}
-
         os.environ["QT_OPENGL"] = "software"
 
         # UI 파일 로드
-        pkg_name = 'pick_and_place_voice'
-        ui_filename = 'order_kiosk.ui' # Ensure this UI file has a QStackedWidget
+        pkg_name = 'turtle_musium'
+        ui_filename = 'monitoring_ui.ui' # Ensure this UI file has a QStackedWidget
         _, package_path = get_resource('packages', pkg_name)
         ui_file = os.path.join(package_path, 'share', pkg_name, 'resource', ui_filename)
         loadUi(ui_file, self)
 
-        self.setWindowTitle("KOONG MARKET")
-        self.stackedWidget.setCurrentIndex(0) # Start with the first page (index 0)
+        self.setWindowTitle("TURTLE MUSIUM")
+        self.stackedWidget.setCurrentIndex(1) # Start with the first page (index 0)
 
         # ROS init
         self.bridge = CvBridge()
 
-        self.node.create_subscription(Image, '/image/color/image_raw_ui', self.color_callback, 10) # QoS 프로필 적용)
+        # self.node.create_subscription(Image, '/image/color/image_raw_ui', self.color_callback, 10) # QoS 프로필 적용)
 
-        self.voice_signal.connect(self.handle_voice_result)
-        self.node.create_subscription(Bool, '/voice_command_success', self.voice_command_callback, 10)
+        # self.voice_signal.connect(self.handle_voice_result)
+        # self.node.create_subscription(Bool, '/voice_command_success', self.voice_command_callback, 10)
 
-        self.qr_check_signal.connect(self.handle_qr_check_result)
-        self.node.create_subscription(
-            TargetList,
-            '/qr_check_state',
-            self.qr_check_callback,
-            10
-        )
+        # self.qr_check_signal.connect(self.handle_qr_check_result)
+        # self.node.create_subscription(
+        #     TargetList,
+        #     '/qr_check_state',
+        #     self.qr_check_callback,
+        #     10
+        # )
 
-        self.order_done_signal.connect(self.handle_order_done)
-        self.node.create_subscription(Bool, '/order_done', self.order_done_callback, 10)
+        # self.order_done_signal.connect(self.handle_order_done)
+        # self.node.create_subscription(Bool, '/order_done', self.order_done_callback, 10)
 
         # ROS spin 쓰레드
         self.spin_thread = threading.Thread(target=self.ros_spin_loop, daemon=True)
