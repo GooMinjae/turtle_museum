@@ -18,7 +18,10 @@ import os
 # model_path = "/home/rokey/train_ws/src/runs/detect/yolov8-custom4/weights/best.pt" # 낮은 신뢰도(65 ~ 75)를 가지고 있지만 오인식이 없다. 
 # model_path = "/home/rokey/train_ws/src/runs/detect/yolov8-custom5/weights/best.pt" # 낮은 신뢰도(60 ~ 70)를 가지고 인식률이 너무 낮다. 
 # model_path = "/home/rokey/train_ws/src/runs/detect/yolov8-custom2-improved2/weights/best.pt" # 그나마 현재 최선?
-model_path = "/home/rokey/train_ws/src/runs/detect/yolov8-custom-org_dataset4/weights/best.pt"
+# model_path = "/home/rokey/train_ws/src/runs/detect/yolov8-custom-org_dataset4/weights/best.pt"
+model_path = "/home/rokey/turtlebot4_ws/runs/detect/web_8n/weights/best.pt" # conf 93
+# model_path = "/home/rokey/turtlebot4_ws/runs/detect/web_8n_no_earlystop/weights/best.pt" # conf 93
+# model_path = "/home/rokey/turtlebot4_ws/runs/detect/web_8s_pt3/weights/best.pt" # conf 90
 
 model = YOLO(model_path)
 
@@ -36,7 +39,7 @@ while True:
         break
 
     # 프레임 예측 (stream=False: 프레임 1개씩 예측)
-    results = model.predict(source=frame, conf=0.10, verbose=False)
+    results = model.predict(source=frame, conf=0.70, verbose=False)
 
     # 예측 결과 가져오기
     result = results[0]

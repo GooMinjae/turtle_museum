@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>792</width>
+    <height>761</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>MainWindow</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <widget class="QStackedWidget" name="stackedWidget">
+    <property name="geometry">
+     <rect>
+      <x>0</x>
+      <y>120</y>
+      <width>791</width>
+      <height>591</height>
+     </rect>
+    </property>
+    <property name="currentIndex">
+     <number>0</number>
+    </property>
+    <widget class="QWidget" name="page01_start">
+     <widget class="QPushButton" name="open_btn">
+      <property name="geometry">
+       <rect>
+        <x>220</x>
+        <y>450</y>
+        <width>351</width>
+        <height>111</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>개장</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="guidebot_info_label">
+      <property name="geometry">
+       <rect>
+        <x>80</x>
+        <y>80</y>
+        <width>431</width>
+        <height>131</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>Guide ROBOT Condition: Dock, Battery</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="petrolbot_info_label">
+      <property name="geometry">
+       <rect>
+        <x>80</x>
+        <y>240</y>
+        <width>431</width>
+        <height>131</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>Petrol ROBOT Condition: Dock, Battery</string>
+      </property>
+     </widget>
+    </widget>
+    <widget class="QWidget" name="page02_barcode">
+     <widget class="QLabel" name="barcode_cam_label">
+      <property name="geometry">
+       <rect>
+        <x>130</x>
+        <y>90</y>
+        <width>531</width>
+        <height>221</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>Barcode Label</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="barcode_info_label">
+      <property name="geometry">
+       <rect>
+        <x>130</x>
+        <y>390</y>
+        <width>531</width>
+        <height>101</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>Barcode Info</string>
+      </property>
+     </widget>
+    </widget>
+    <widget class="QWidget" name="page03_tracking_person">
+     <widget class="QLabel" name="guidebot_cam_label">
+      <property name="geometry">
+       <rect>
+        <x>170</x>
+        <y>50</y>
+        <width>461</width>
+        <height>291</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>TextLabel</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="guidebot_cam_label_2">
+      <property name="geometry">
+       <rect>
+        <x>160</x>
+        <y>420</y>
+        <width>461</width>
+        <height>131</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>__ 작품 이동중</string>
+      </property>
+     </widget>
+    </widget>
+    <widget class="QWidget" name="page04_description">
+     <widget class="QLabel" name="piece_img">
+      <property name="geometry">
+       <rect>
+        <x>150</x>
+        <y>410</y>
+        <width>461</width>
+        <height>131</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>description label</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="description_label">
+      <property name="geometry">
+       <rect>
+        <x>160</x>
+        <y>40</y>
+        <width>461</width>
+        <height>291</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>작품 IMG</string>
+      </property>
+     </widget>
+    </widget>
+    <widget class="QWidget" name="page05_multi_robot_cam">
+     <widget class="QLabel" name="description_label_2">
+      <property name="geometry">
+       <rect>
+        <x>20</x>
+        <y>30</y>
+        <width>371</width>
+        <height>241</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>guide cam</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="description_label_3">
+      <property name="geometry">
+       <rect>
+        <x>400</x>
+        <y>30</y>
+        <width>371</width>
+        <height>241</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>petrol cam</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="piece_img_2">
+      <property name="geometry">
+       <rect>
+        <x>160</x>
+        <y>400</y>
+        <width>461</width>
+        <height>131</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>info</string>
+      </property>
+     </widget>
+    </widget>
+    <widget class="QWidget" name="page06_exit_webcam">
+     <widget class="QLabel" name="webcam_label">
+      <property name="geometry">
+       <rect>
+        <x>140</x>
+        <y>30</y>
+        <width>481</width>
+        <height>311</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>exit webcam</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="condition_exit_label">
+      <property name="geometry">
+       <rect>
+        <x>160</x>
+        <y>430</y>
+        <width>481</width>
+        <height>141</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>BOOL</string>
+      </property>
+     </widget>
+    </widget>
+    <widget class="QWidget" name="page07_final">
+     <widget class="QLabel" name="db_label">
+      <property name="geometry">
+       <rect>
+        <x>150</x>
+        <y>80</y>
+        <width>511</width>
+        <height>231</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>통계 - DB 연동 및 robots condition</string>
+      </property>
+     </widget>
+     <widget class="QPushButton" name="close_btn">
+      <property name="geometry">
+       <rect>
+        <x>200</x>
+        <y>390</y>
+        <width>351</width>
+        <height>111</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>폐장</string>
+      </property>
+     </widget>
+    </widget>
+   </widget>
+  </widget>
+  <widget class="QMenuBar" name="menubar">
+   <property name="geometry">
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>792</width>
+     <height>22</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
