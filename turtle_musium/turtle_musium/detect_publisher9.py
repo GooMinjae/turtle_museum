@@ -5,7 +5,8 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from geometry_msgs.msg import PointStamped
-from std_msgs.msg import String
+from std_msgs.msg import String ,Bool
+from std_srvs.srv import Trigger
 
 from cv_bridge import CvBridge
 from ultralytics import YOLO
@@ -32,11 +33,13 @@ class YoloPerson(Node):
         self.camera_frame = None
         self.shutdown_requested = False
         self.logged_intrinsics = False
-
+        self.should_infer = False
         self._pair_lock = threading.Lock()
         self._latest_pair = None
         self.infer_lock = threading.Lock()
         self.last_processed_stamp = None
+        self.person_detect = False
+
 
         # === Load YOLO model ===
         self.model = YOLO(
@@ -46,10 +49,15 @@ class YoloPerson(Node):
         self.get_logger().info("YOLOv8 model loaded.")
 
         # === Publishers ===
-        self.main_pub = self.create_publisher(String, '/robot9/which_hand', 10)
+
         self.person_point_cam_pub = self.create_publisher(PointStamped, '/robot9/point_camera', 10)
 
         # === Subscriptions ===
+        self.srv_painting = self.create_service(Trigger, '/robot9/painting', self.callback_painting)
+        self.sub_gift_start = self.create_subscription(Bool,'/robot9/gift_start',self.callback_gift_start,10)
+        self.sub_person = self.create_subscription(Bool,'/robot9/person',self.callback_person,10)
+        self.put_giftshop = self.create_publisher(Bool,'/robot9/gift_shop',10)
+
         qos_profile = QoSProfile(depth=2)
         qos_profile.reliability = QoSReliabilityPolicy.BEST_EFFORT
 
@@ -57,6 +65,7 @@ class YoloPerson(Node):
 
         self.rgb_sub = Subscriber(self, CompressedImage, '/robot9/oakd/rgb/image_raw/compressed', qos_profile=qos_profile)
         self.depth_sub = Subscriber(self, Image, '/robot9/oakd/stereo/image_raw', qos_profile=qos_profile)
+        
 
         self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.4)
         self.ts.registerCallback(self.synced_rgb_depth_cb)
@@ -110,13 +119,35 @@ class YoloPerson(Node):
 
         except Exception as e:
             self.get_logger().error(f"Sync decode failed: {e}")
+    def callback_painting(self,request,response):
+        self.should_infer = True
+        if self.label in ("pice_1","pice_2","pice_3"):
+            response.success = True
+            self.label = None
+            self.should_infer = False
 
+            return response
+    def callback_person(self,msg: Bool):
+        self.should_infer = msg.data
+        if msg.data:
+            self.person_detect = True
+        else:
+            self.person_detect = False
+
+
+    def callback_gift_start(self,msg: Bool):
+        self.should_infer = msg.data
+        self.put_giftshop.publish(msg)
+
+
+        
     # ---------------------------
     # Inference loop
     # ---------------------------
     def run_inference_thread(self):
         while not self.shutdown_requested:
-            self.process_frame()
+            if self.should_infer:
+                self.process_frame()
             time.sleep(0.2)
 
     def process_frame(self):
@@ -143,23 +174,14 @@ class YoloPerson(Node):
 
             for det in results.boxes:
                 cls = int(det.cls[0])
-                label = self.model.names[cls].lower()
+                self.label = self.model.names[cls].lower()
                 conf = float(det.conf[0])
                 x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
 
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{label} {conf:.2f}", (x1, max(0, y1-5)),
+                cv2.putText(frame, f"{self.label} {conf:.2f}", (x1, max(0, y1-5)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-                # Publish gesture
-                if label in ("one", "five"):
-                    self.main_pub.publish(String(data=label))
-                    self.get_logger().info(f"{label}")
-
-                    any_main = True
-
-                # Publish 3D point
-                if label in ("car", "bottle"):
+                if (self.label == 'person' and self.person_detect) or self.label == 'gift_data':
                     u = (x1 + x2) // 2
                     v = (y1 + y2) // 2
                     if not (0 <= u < W and 0 <= v < H):
@@ -177,11 +199,13 @@ class YoloPerson(Node):
                     pt.header.stamp = pair.stamp
                     pt.point.x, pt.point.y, pt.point.z = X, Y, z
                     self.person_point_cam_pub.publish(pt)
-                    self.get_logger().info(f"{label}")
+                    self.get_logger().info(f"{self.label}")
 
 
-            if not any_main:
-                self.main_pub.publish(String(data="none"))
+
+
+
+
 
             self.display_frame = frame
             self.last_processed_stamp = pair.stamp

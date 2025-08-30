@@ -25,7 +25,9 @@ class tracker_node(Node):
         self.create_subscription(PointStamped,'/robot9/point_camera',self.callback_depth,10)
         self.target_result = 'person'
         self.create_subscription(String,'/robot9/tracking_object',self.callback_result,10)
-        self.pub_done = self.create_publisher(Bool,'/robot9/is_done_track',10)
+        self.pub_done = self.create_publisher(Bool,'/robot9/is_done_gift',10)
+        self.sub_gift_start = self.create_subscription(Bool,'/robot9/giftshop',self.callback_giftshop,10)
+
         self.latest_map_point = None
         self.goal_handle = None
         self.block_goal_updates = True
@@ -40,10 +42,11 @@ class tracker_node(Node):
         self.target_result = msg.data
         self.get_logger().info(f"{msg.data}")
 
-        
+    def callback_giftshop(self,msg: Bool):
+        self.gift_put = msg.data
             
     def callback_depth(self,pt):
-        if self.target_result == 'person' or self.target_result == 'bottle':
+        if self.target_result == 'person' or self.gift_put:
             try:
                 self.get_logger().info(f"traget_result={self.target_result}")
                 if self.target_result == 'bottle':
