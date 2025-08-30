@@ -2,7 +2,7 @@ import sys
 import cv2
 import os
 from PyQt5.QtWidgets import (
-    QApplication, QLabel, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QSizePolicy
+    QApplication, QLabel, QWidget, QPushButton
 )
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
@@ -18,13 +18,11 @@ class BarcodeScannerApp(QWidget):
         # UI 요소는 .ui에서 주입됨
         self.barcode_cam_label = None
         self.barcode_info_label = None
-        self.scan_button = None
 
-    def set_ui(self, *, cam_label, info_label, scan_button):
+    def set_ui(self, *, cam_label, info_label):
         """ .ui 로드 후 외부에서 라벨/버튼을 꽂아줌 """
         self.barcode_cam_label = cam_label
         self.barcode_info_label = info_label
-        self.scan_button = scan_button
 
         # 초기 문구
         self.barcode_cam_label.setText("카메라 화면")
@@ -32,7 +30,7 @@ class BarcodeScannerApp(QWidget):
 
 
     def start_scanning(self):
-        self.barcode_info_label.setText("스캔 중입니다...")  # 상태 표시
+        self.barcode_info_label.setText("바코드 스캔 중입니다...")  # 상태 표시
         self.scanner_worker = BarcodeScannerWorker()
         self.scanner_worker.frameCaptured.connect(self.update_frame)
         self.scanner_worker.barcodeDetected.connect(self.display_barcode_info_label)
@@ -85,7 +83,6 @@ class BarcodeScannerApp(QWidget):
     def handle_camera_error(self, error_msg):
         self.barcode_cam_label.setText(error_msg)
         self.barcode_info_label.setText("카메라 연결 실패\n잠시 후 다시 시도해주세요.")
-        self.scan_button.setEnabled(True)
         self.scanner_worker.stop()
 
 
@@ -95,7 +92,6 @@ class BarcodeScannerApp(QWidget):
             self.scanner_worker.stop()
         except (AttributeError, TypeError):
             pass
-        self.scan_button.setEnabled(True) # 재인식 시도
         self.barcode_info_label.setText("바코드가 없으신가요?\n[취소] 버튼을 눌러주세요.")  # 상태 표시
         self.barcode_cam_label.setText("카메라 화면")
 
@@ -124,8 +120,7 @@ if __name__ == "__main__":
     # .ui의 objectName과 매칭되는 위젯 주입
     cam_label = main_win.findChild(QLabel, "barcode_cam_label")
     info_label = main_win.findChild(QLabel, "barcode_info_label")
-    scan_button = main_win.findChild(QPushButton, "scan_button")
-    scanner.set_ui(cam_label=cam_label, info_label=info_label, scan_button=scan_button)
+    scanner.set_ui(cam_label=cam_label, info_label=info_label)
 
     # 버튼으로 시작하고 싶으면 아래 한 줄로 연결
     # scan_button.clicked.connect(scanner.start_scanning)
