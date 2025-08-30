@@ -48,9 +48,9 @@ class Turtlebot4GuideCounter(Node):
         self.initial_x = float(self.get_parameter('initial_x').value)
         self.initial_y = float(self.get_parameter('initial_y').value)
         self.initial_dir = str(self.get_parameter('initial_dir').value).upper()
-        self.goal_x = float(self.get_parameter('goal_x').value)
-        self.goal_y = float(self.get_parameter('goal_y').value)
-        self.goal_dir = str(self.get_parameter('goal_dir').value).upper()
+        self.goal_x = -3.54
+        self.goal_y = 0.917
+        self.goal_dir = str(self.get_parameter(0.00247).value).upper()
         self.timeout_sec = float(self.get_parameter('timeout_sec').value)
 
         # ===== State =====
