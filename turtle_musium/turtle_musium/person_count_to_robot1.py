@@ -7,6 +7,7 @@ from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Int32, Bool
 from turtlebot4_navigation.turtlebot4_navigator import TurtleBot4Directions, TurtleBot4Navigator
+from geometry_msgs.msg import PoseWithCovarianceStamped
 
 import numpy as np
 import cv2
@@ -50,7 +51,7 @@ class Turtlebot4GuideCounter(Node):
         self.initial_dir = str(self.get_parameter('initial_dir').value).upper()
         self.goal_x = -3.54
         self.goal_y = 0.917
-        self.goal_dir = str(self.get_parameter(0.00247).value).upper()
+        self.goal_dir = "EAST"
         self.timeout_sec = float(self.get_parameter('timeout_sec').value)
 
         # ===== State =====
@@ -130,30 +131,33 @@ class Turtlebot4GuideCounter(Node):
         try:
             nav = TurtleBot4Navigator()
 
-            # 안정성: 도킹 상태 맞추기
-            if not nav.getDockedStatus():
-                nav.dock()
-
-            # 초기 자세
-            init_pose = nav.getPoseStamped([self.initial_x, self.initial_y], self._dir_enum(self.initial_dir))
-            nav.setInitialPose(init_pose)
-
             # Nav2 활성 대기
+            self.get_logger().info("Waiting for Nav2 to become active...")
             nav.waitUntilNav2Active()
 
-            # undock
-            nav.undock()
+            # undock (필요 시)
+            try:
+                if nav.getDockedStatus():
+                    nav.undock()
+                    self.get_logger().info("Undocking...")
+            except Exception as e:
+                self.get_logger().warn(f"Undock skipped: {e}")
 
-            # 목표 이동
-            goal_pose = nav.getPoseStamped([self.goal_x, self.goal_y], self._dir_enum(self.goal_dir))
+            # 목표 pose
+            goal_pose = nav.getPoseStamped(
+                [self.goal_x, self.goal_y],
+                self._dir_enum(self.goal_dir)
+            )
+            self.get_logger().info(f"Navigating to ({self.goal_x:.2f}, {self.goal_y:.2f}) dir={self.goal_dir}")
+
             nav.startToPose(goal_pose)
 
-            # 완료 대기(타임아웃 포함)
+            # 완료 대기 (타임아웃 포함)
             t0 = time.time()
             while not nav.isTaskComplete():
                 if time.time() - t0 > self.timeout_sec:
                     nav.cancelTask()
-                    self.get_logger().warn('Navigation timeout; canceled.')
+                    self.get_logger().warn("Navigation timeout; canceled.")
                     break
                 time.sleep(0.2)
 
@@ -161,17 +165,17 @@ class Turtlebot4GuideCounter(Node):
             self.pub_arrived.publish(Bool(data=arrived))
 
             if arrived:
-                # 도착 → 추론 단계로
+                self.get_logger().info("Arrived at goal, switching to INFERENCING")
                 self._transition_to(self.STATE_INF)
             else:
-                # 실패 → 대기 상태로
                 self._transition_to(self.STATE_WAIT)
 
         except Exception as e:
-            self.get_logger().error(f'Navigation error: {e}')
+            self.get_logger().error(f"Navigation error: {e}")
             self._transition_to(self.STATE_WAIT)
         finally:
             self._nav_busy = False
+
 
     # ---------- Inference ----------
     def infer_tick(self):
