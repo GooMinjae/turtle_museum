@@ -25,6 +25,7 @@ setup(
             'main = mini_project.main_logic:main',
             'detect=mini_project.detect_publisher:main',
             'tracker=mini_project.tracker:main',
+            'detect_tracker=mini_project.detect_tracker:main'
 
         ],
     },
