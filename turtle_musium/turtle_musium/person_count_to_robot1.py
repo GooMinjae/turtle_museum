@@ -71,7 +71,8 @@ class Turtlebot4GuideCounter(Node):
         self.model = None
         if not self.bypass:
             try:
-                self.model = YOLO('yolov8n.pt')
+                self.model = YOLO('/home/rokey/turtlebot4_ws/src/turtle_musium/resource/only_people_8n_batch32.pt')
+                self.model.to('cuda')
             except Exception as e:
                 self.get_logger().warn(f'YOLO load failed, switching to bypass: {e}')
                 self.bypass = True
@@ -131,6 +132,20 @@ class Turtlebot4GuideCounter(Node):
                 self._transition_to(self.STATE_NAV)
                 self._start_navigation_thread()
     # ---------- Navigation ----------
+    def _on_navigation_complete(self, future):
+        result = future.result()
+        if not result:
+            self.get_logger().error("Navigation failed!")
+            return
+
+        # 마지막 목표인지 확인
+        if self.current_target_idx == len(self.targets) - 1:
+            # 마지막이면 INFERENCING 안 하고 종료 처리
+            self.get_logger().info("마지막 목표 도착! 추론 건너뜀.")
+            self._transition_to(self.STATE_LATCHED)
+            return
+        # 마지막이 아니면 INFERENCING 상태로 전환
+        self._transition_to(self.STATE_INF)
     def _dir_enum(self, name: str):
         return getattr(TurtleBot4Directions, name)
     def _start_navigation_thread(self):
@@ -181,37 +196,40 @@ class Turtlebot4GuideCounter(Node):
     def infer_tick(self):
         if self.state != self.STATE_INF:
             return
-        if self.latched or self.rgb_image is None:
+        if self.rgb_image is None:
             return
-        
+
+        # 마지막 목표 지점이라면 추론 건너뜀
+        if self.current_target_idx == len(self.targets) - 1:
+            self._transition_to(self.STATE_LATCHED)
+            return
+
         try:
-            if self.bypass:
-                n_people = self.audience_count
-            else:
-                frame = self.rgb_image.copy()
-                results = self.model.predict(source=frame, classes=[0], conf=self.conf, verbose=False)
-                r = results[0] if results else None
-                n_people = int(len(r.boxes)) if (r is not None and getattr(r, 'boxes', None) is not None) else 0
+            frame = self.rgb_image.copy()
+            results = self.model.predict(source=frame, classes=[0], conf=self.conf, verbose=False)
+            r = results[0] if results else None
+            n_people = int(len(r.boxes)) if (r is not None and getattr(r, 'boxes', None) is not None) else 0
+
             # 연속 일치 판정
             if (self.audience_count != 0) and (n_people == self.audience_count):
                 self.consec_match += 1
             else:
                 self.consec_match = 0
+
             if self.consec_match >= self.match_threshold:
                 self.pub_people_check.publish(Bool(data=True))
                 self.latched = True
                 self._transition_to(self.STATE_LATCHED)
-                self.get_logger().info(
-                    f'people_check -> True (matched {self.consec_match} frames). Latched.'
-                )
-                self._action_requested = True
+                self.get_logger().info(f'people_check -> True (matched {self.consec_match} frames). Latched.')
 
-            # ===== 다음 좌표 이동 =====
-            if self.current_target_idx + 1 < len(self.targets):          
-                self.current_target_idx += 1                             
-                self._transition_to(self.STATE_NAV)                      
-                self._start_navigation_thread()           
-
+                # 다음 좌표 이동
+                if self.current_target_idx + 1 < len(self.targets):
+                    self.current_target_idx += 1
+                    self._transition_to(self.STATE_NAV)
+                    self._start_navigation_thread()
+            else:
+                # 일치하지 않으면 INFERENCING 유지, 위치 고정
+                self.get_logger().info(f"Matching: {self.consec_match}/{self.match_threshold}, waiting...")
         except Exception as e:
             self.get_logger().error(f'Inference failed: {e}')
     # ---------- Utils ----------

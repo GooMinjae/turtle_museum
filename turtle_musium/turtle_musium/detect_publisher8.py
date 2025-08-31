@@ -41,7 +41,7 @@ class YoloPerson(Node):
 
         # === Load YOLO model ===
         self.model = YOLO(
-            "/home/rokey/turtlebot4_ws/src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt"
+            "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/only_people_8n_batch32.pt"
         )
         self.model.to('cuda')
         self.get_logger().info("YOLOv8 model loaded.")

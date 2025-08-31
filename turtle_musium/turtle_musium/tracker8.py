@@ -7,6 +7,7 @@ from tf2_ros import Buffer, TransformListener  # TF 변환 버퍼/리스너
 from rclpy.node import Node  # ROS2 노드 기본 클래스
 from voice_processing import tts
 from std_msgs.msg import String
+from rclpy.time import Time
 
 import tf2_geometry_msgs  # PointStamped 등 TF 변환 타입 지원을 위한 임포트(실사용은 없지만 등록 용도)
 # --------- ROS2 유틸/시간/수학/외부프로세스 ---------
