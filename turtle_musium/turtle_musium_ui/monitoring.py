@@ -9,6 +9,10 @@ from page04_check_exit_people_screen import CheckExitCamScreen
 
 import rclpy
 
+
+from count_bridge import CountBridge
+from visit_db import insert_visit, update_counted_count
+
 UI_FILE = "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/monitoring_ui.ui"
 
 class MonitoringApp:
@@ -26,6 +30,10 @@ class MonitoringApp:
 
         # ROS init 상태 추적 (page04 전용)
         self.ros_active = False
+
+        # 카운트 브릿지 & 현재 방문 rowid
+        self.count_bridge = None
+        self.current_visit_id = None
 
         # 페이지 변경 시그널 연결
         self.stacked.currentChanged.connect(self.on_page_changed)
@@ -74,14 +82,49 @@ class MonitoringApp:
             self.page02.set_ui(cam_label=cam_label, info_label=info_label)
         self.page02.start_scanning()
 
+        # ★ CountBridge 시작(이 시점부터 /tour/count/done 대기)
+        if self.count_bridge is None:
+            self.count_bridge = CountBridge()
+            self.count_bridge.countDone.connect(self.on_count_done)
+            self.count_bridge.start()
+
+
     def stop_page02(self):
         if self.page02:
-            self.page02.close_app()  # 내부 스레드/캠 자원 정리
+            self.page02.close_app()
+        if self.count_bridge:
+            self.count_bridge.stop()
+            self.count_bridge = None
+        self.current_visit_id = None
+
 
     def on_barcode_scanned(self, data: str):
-        print("[monitoring] barcode:", data)
-        # 필요하면 여기서 page03 등으로 전환:
-        # self.stacked.setCurrentWidget(self.ui.page03_description)
+        # 예: "YYYYMMDD-<인원수>-<기념품코드>"
+        try:
+            date_str, planned_count, gift_str = data.split("-")
+        except Exception:
+            print("[monitoring] 잘못된 바코드 형식:", data)
+            return
+
+        # DB insert
+        self.current_visit_id = insert_visit(date_str, int(planned_count), gift_str)
+        print("[monitoring] DB insert visit_id:", self.current_visit_id)
+
+        # 예상 인원 퍼블리시
+        if self.count_bridge:
+            self.count_bridge.publish_expected_count(int(planned_count))
+            print("[monitoring] publish /tour/count/request:", planned_count)
+
+
+    # /tour/count/done 수신 핸들러
+    def on_count_done(self, counted: int):
+        print("[monitoring] /tour/count/done:", counted)
+        if self.current_visit_id is not None:
+            update_counted_count(self.current_visit_id, counted)
+            print("[monitoring] DB update counted_count")
+
+        # 다음 페이지로 전환(page03)
+        self.stacked.setCurrentWidget(self.ui.page03_description)
 
     # ————————————————————————
     # page03: 작품 설명(로봇 위치 → 작품 이미지/설명 표시)

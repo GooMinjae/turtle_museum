@@ -77,6 +77,9 @@ class BarcodeScannerApp(QWidget):
 
         self.barcode_info_label.setText(txt)
         print(f"[스캔 결과] {barcode_data}")
+
+        if self.barcode_cam_label:
+            self.barcode_cam_label.setText("인원 수 파악 중")
         self.on_barcode_callback(barcode_data)
         self.close_app()
 
