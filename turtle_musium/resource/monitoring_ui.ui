@@ -24,7 +24,7 @@
      </rect>
     </property>
     <property name="currentIndex">
-     <number>0</number>
+     <number>2</number>
     </property>
     <widget class="QWidget" name="page01_start">
      <widget class="QPushButton" name="open_btn">
@@ -95,8 +95,8 @@
       </property>
      </widget>
     </widget>
-    <widget class="QWidget" name="page03_tracking_person">
-     <widget class="QLabel" name="guidebot_cam_label">
+    <widget class="QWidget" name="page03_description">
+     <widget class="QLabel" name="piece_img">
       <property name="geometry">
        <rect>
         <x>170</x>
@@ -109,7 +109,7 @@
        <string>TextLabel</string>
       </property>
      </widget>
-     <widget class="QLabel" name="guidebot_cam_label_2">
+     <widget class="QLabel" name="description_label">
       <property name="geometry">
        <rect>
         <x>160</x>
@@ -123,75 +123,8 @@
       </property>
      </widget>
     </widget>
-    <widget class="QWidget" name="page04_description">
-     <widget class="QLabel" name="piece_img">
-      <property name="geometry">
-       <rect>
-        <x>150</x>
-        <y>410</y>
-        <width>461</width>
-        <height>131</height>
-       </rect>
-      </property>
-      <property name="text">
-       <string>description label</string>
-      </property>
-     </widget>
-     <widget class="QLabel" name="description_label">
-      <property name="geometry">
-       <rect>
-        <x>160</x>
-        <y>40</y>
-        <width>461</width>
-        <height>291</height>
-       </rect>
-      </property>
-      <property name="text">
-       <string>작품 IMG</string>
-      </property>
-     </widget>
-    </widget>
-    <widget class="QWidget" name="page05_multi_robot_cam">
-     <widget class="QLabel" name="description_label_2">
-      <property name="geometry">
-       <rect>
-        <x>20</x>
-        <y>30</y>
-        <width>371</width>
-        <height>241</height>
-       </rect>
-      </property>
-      <property name="text">
-       <string>guide cam</string>
-      </property>
-     </widget>
-     <widget class="QLabel" name="description_label_3">
-      <property name="geometry">
-       <rect>
-        <x>400</x>
-        <y>30</y>
-        <width>371</width>
-        <height>241</height>
-       </rect>
-      </property>
-      <property name="text">
-       <string>petrol cam</string>
-      </property>
-     </widget>
-     <widget class="QLabel" name="piece_img_2">
-      <property name="geometry">
-       <rect>
-        <x>160</x>
-        <y>400</y>
-        <width>461</width>
-        <height>131</height>
-       </rect>
-      </property>
-      <property name="text">
-       <string>info</string>
-      </property>
-     </widget>
-    </widget>
+    <widget class="QWidget" name="page04_description"/>
+    <widget class="QWidget" name="page05_multi_robot_cam"/>
     <widget class="QWidget" name="page06_exit_webcam">
      <widget class="QLabel" name="webcam_label">
       <property name="geometry">
