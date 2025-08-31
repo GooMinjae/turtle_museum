@@ -1,230 +1,158 @@
 import sys
-import os
-import threading
-import cv2
-import rclpy
-from rclpy.qos import QoSProfile
-from cv_bridge import CvBridge
-from rclpy.node import Node
-
-# from PyQt5.QtCore import pyqtSignal
-
-from ament_index_python.resources import get_resource
+from PyQt5.QtWidgets import QApplication, QLabel
 from PyQt5.uic import loadUi
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtWidgets import QMainWindow, QApplication, QStackedWidget
 
-# import mediapipe as mp
+# 각 페이지 컨트롤러
+from page02_barcode_scanner_screen import BarcodeScannerApp
+from page03_description_art_screen import GuideTracking
+from page04_check_exit_people_screen import CheckExitCamScreen
 
-from std_msgs.msg import Bool
+import rclpy
 
-from rclpy.executors import MultiThreadedExecutor
+UI_FILE = "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/monitoring_ui.ui"
 
-# from voice_processing.tts import say, say_async
-
-from sensor_msgs.msg import Image, CameraInfo
-
-
-class WindowClass(QMainWindow):
-    voice_signal = pyqtSignal(bool)
-    qr_check_signal = pyqtSignal(list, bool, bool)
-    order_done_signal = pyqtSignal()
-
+class MonitoringApp:
     def __init__(self):
-        super().__init__()
-        rclpy.init(args=None)
-        self.node = rclpy.create_node("window")
+        self.app = QApplication(sys.argv)
+        self.ui  = loadUi(UI_FILE)
 
-        os.environ["QT_OPENGL"] = "software"
+        # 현재 활성 페이지 인덱스 (ui 파일에서 페이지 이름은 예시: page02_barcode, page03_description, page04_exit_webcam)
+        self.stacked = self.ui.stackedWidget
 
-        # UI 파일 로드
-        pkg_name = 'turtle_musium'
-        ui_filename = 'monitoring_ui.ui' # Ensure this UI file has a QStackedWidget
-        _, package_path = get_resource('packages', pkg_name)
-        ui_file = os.path.join(package_path, 'share', pkg_name, 'resource', ui_filename)
-        loadUi(ui_file, self)
+        # 컨트롤러 보관 (지연 생성)
+        self.page02 = None  # BarcodeScannerApp
+        self.page03 = None  # GuideTracking
+        self.page04 = None  # CheckExitCamScreen
 
-        self.setWindowTitle("TURTLE MUSIUM")
-        self.stackedWidget.setCurrentIndex(1) # Start with the first page (index 0)
+        # ROS init 상태 추적 (page04 전용)
+        self.ros_active = False
 
-        # ROS init
-        self.bridge = CvBridge()
+        # 페이지 변경 시그널 연결
+        self.stacked.currentChanged.connect(self.on_page_changed)
 
-        # self.node.create_subscription(Image, '/image/color/image_raw_ui', self.color_callback, 10) # QoS 프로필 적용)
+        # 시작 페이지 지정 (원하는 페이지로 바꿔도 됨)
+        self.stacked.setCurrentWidget(self.ui.page01_start)
+        self.ui.open_btn.clicked.connect(lambda: self.stacked.setCurrentWidget(self.ui.page02_barcode))
+        # 여기서는 UI가 기본으로 띄우는 페이지를 그대로 사용
 
-        # self.voice_signal.connect(self.handle_voice_result)
-        # self.node.create_subscription(Bool, '/voice_command_success', self.voice_command_callback, 10)
+        # 초기 진입 처리
+        self.on_page_changed(self.stacked.currentIndex())
 
-        # self.qr_check_signal.connect(self.handle_qr_check_result)
-        # self.node.create_subscription(
-        #     TargetList,
-        #     '/qr_check_state',
-        #     self.qr_check_callback,
-        #     10
-        # )
+        # 윈도우 닫힐 때 정리
+        self.ui.closeEvent = self._wrap_close_event(self.ui.closeEvent)
 
-        # self.order_done_signal.connect(self.handle_order_done)
-        # self.node.create_subscription(Bool, '/order_done', self.order_done_callback, 10)
+    # ————————————————————————
+    # 페이지 엔트리/엑싯 공통 처리
+    # ————————————————————————
+    def on_page_changed(self, idx: int):
+        # 모든 페이지 정리(나가는 페이지들 정리)
+        self.stop_page02()
+        self.stop_page03()
+        self.stop_page04()
 
-        # ROS spin 쓰레드
-        self.spin_thread = threading.Thread(target=self.ros_spin_loop, daemon=True)
-        self.spin_thread.start()
+        # 진입한 페이지 시작
+        current_widget = self.stacked.currentWidget()
+        if current_widget is self.ui.page02_barcode:
+            self.start_page02()
+        elif current_widget is self.ui.page03_description:
+            # page04에서 쓰던 ROS2가 켜져 있다면 먼저 내려서 충돌 방지
+            self.ensure_ros_stopped()
+            self.start_page03()
+        elif current_widget is self.ui.page04_exit_webcam:
+            # page04는 rclpy 필요
+            self.ensure_ros_started()
+            self.start_page04()
 
-        self.start_camera_thread()
+    # ————————————————————————
+    # page02: 바코드
+    # ————————————————————————
+    def start_page02(self):
+        if self.page02 is None:
+            self.page02 = BarcodeScannerApp(on_barcode_callback=self.on_barcode_scanned)
+            cam_label  = self.ui.findChild(QLabel, "barcode_cam_label")
+            info_label = self.ui.findChild(QLabel, "barcode_info_label")
+            self.page02.set_ui(cam_label=cam_label, info_label=info_label)
+        self.page02.start_scanning()
 
-        self.initialize_all()
+    def stop_page02(self):
+        if self.page02:
+            self.page02.close_app()  # 내부 스레드/캠 자원 정리
 
-    def initialize_all(self):
-        self.stackedWidget.setCurrentIndex(0)
-        self.order_label.setText('환영합니다! 무엇을 구매하시겠습니까? \n"Hello, ROKEY"로 시작해주세요')
-        self.target_list = []
-        if hasattr(self, 'cam_worker'):
-            self.cam_worker.set_detection_enabled(True)
-        self.speaking = False
-        self.need_id = False
-        self.switch_mp = True
+    def on_barcode_scanned(self, data: str):
+        print("[monitoring] barcode:", data)
+        # 필요하면 여기서 page03 등으로 전환:
+        # self.stacked.setCurrentWidget(self.ui.page03_description)
 
-    def ros_spin_loop(self):
-        executor = MultiThreadedExecutor()
-        executor.add_node(self.node)      # 구독 달아둔 노드
-        # executor.add_node(self.img_node)  # 이미지 프레임 노드
-        while rclpy.ok():
-            executor.spin_once(timeout_sec=0.05)
+    # ————————————————————————
+    # page03: 작품 설명(로봇 위치 → 작품 이미지/설명 표시)
+    # ————————————————————————
+    def start_page03(self):
+        if self.page03 is None:
+            self.page03 = GuideTracking()
+            cam_label  = self.ui.findChild(QLabel, "piece_img")
+            info_label = self.ui.findChild(QLabel, "description_label")
+            # set_ui 안에서 ArtworkBridge가 start() 되며, 내부 스레드에서 rclpy.init()을 수행
+            self.page03.set_ui(cam_label=cam_label, info_label=info_label)
+        # 별도 start 없음 (set_ui에서 시작)
 
-    def stop_camera_thread(self):
-        if hasattr(self, 'cam_worker') and self.cam_worker.running:
-            self.cam_worker.stop()
-            self.cam_thread.quit()
-            self.cam_thread.wait()
+    def stop_page03(self):
+        if self.page03:
+            self.page03.close_app()  # ArtworkBridge stop() → 내부에서 rclpy.shutdown()
 
+    # ————————————————————————
+    # page04: 출구 사람 감시( YOLO + ROS Bool 퍼블리시 )
+    # ————————————————————————
+    def start_page04(self):
+        if self.page04 is None:
+            self.page04 = CheckExitCamScreen()
+            cam_label  = self.ui.findChild(QLabel, "webcam_label")
+            info_label = self.ui.findChild(QLabel, "condition_exit_label")
+            self.page04.set_ui(cam_label=cam_label, info_label=info_label)
+        self.page04.start_scanning()
 
-    def on_face_detected(self):
-        # 중복 TTS 방지
-        if not self.speaking:
-            self.speaking = True
-            say_async("어서오세요. 무엇을 도와드릴까요?")
+    def stop_page04(self):
+        if self.page04:
+            self.page04.close_app()
 
-    def voice_command_callback(self, msg):
-        self.switch_mp = False
-        self.voice_signal.emit(msg.data)
+    # ————————————————————————
+    # ROS2 컨텍스트 관리 (page04 전용)
+    # ————————————————————————
+    def ensure_ros_started(self):
+        if not self.ros_active:
+            rclpy.init(args=None)
+            self.ros_active = True
 
-    def qr_check_callback(self, msg):
-        self.qr_check_signal.emit(list(msg.targets), msg.is_checking, msg.qr_status)
+    def ensure_ros_stopped(self):
+        if self.ros_active:
+            try:
+                rclpy.shutdown()
+            except Exception:
+                pass
+            self.ros_active = False
 
-    def order_done_callback(self, msg):
-        if msg.data:
-            self.order_done_signal.emit()
+    # ————————————————————————
+    # 종료 처리
+    # ————————————————————————
+    def _wrap_close_event(self, orig_handler):
+        def handler(event):
+            # 페이지별 종료 정리
+            self.stop_page02()
+            self.stop_page03()
+            self.stop_page04()
+            # ROS 내려주기 (혹시 켜져 있으면)
+            self.ensure_ros_stopped()
+            # 원래 핸들러 호출
+            if orig_handler:
+                orig_handler(event)
+        return handler
 
-    def handle_voice_result(self, success: bool):
-        if success:
-            # self.stackedWidget.setCurrentIndex(0)
-            self.order_label.setText("음성 인식 완료")
-            if hasattr(self, 'cam_worker'):
-                self.cam_worker.set_detection_enabled(False)
-        else:
-            self.order_label.setText("음성 인식 실패")
-
-
-    def calculation(self, item_list):
-        total_price = 0
-        for item in item_list:
-            price = self.item_price.get(item, 0)
-            total_price += price
-        
-        return total_price
-
-    def handle_qr_check_result(self, target_list, is_checking, qr_status):
-        if is_checking:
-            print("[QR 페이지] QR 인식 중")
-            self.order_label.setText("QR 인식 중")
-            self.need_id = True
-        else:
-            print("[메인 페이지] QR 인식 종료")
-
-            if qr_status and self.need_id:
-                say_async("인증 되었습니다.")
-                self.order_label.setText("성인 인증 성공")
-                self.need_id = False
-                print("성인 인증 성공")
-            elif (not qr_status) and self.need_id:
-                say_async("인증 되지 않았습니다.")
-                self.order_label.setText("성인 인증 실패")
-                self.need_id = False
-                print("성인 인증 실패")
-
-            print("품목:", target_list)
-            self.target_list = target_list
-
-    def handle_order_done(self):
-        print("[결제 페이지] 모든 품목 처리 완료")
-        self.stackedWidget.setCurrentIndex(2)
-        self.price_list.clear()
-        
-        price = self.calculation(self.target_list)
-
-        for item in self.target_list:
-            self.price_list.addItem(f"{item}: {self.item_price[item]} 원")
-
-        self.total_price_label.setText(f"총 금액: {price} 원")
-
-        say_async("감사합니다. 안녕히 가세요.")
-
-        QTimer.singleShot(5000, lambda: self.initialize_all())
-
-    
-    def color_callback(self, msg):
-        # print('111111111')
-        self.latest_frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
-
-    def get_color_frame(self):
-        return self.latest_frame
-
-    def timerEvent(self, event):
-        frame = self.get_color_frame
-        if frame is not None:
-            self.update_frame(frame)
-
-    def start_camera_thread(self):
-        # 이미 실행 중이면 다시 시작 안 함
-        if hasattr(self, 'cam_thread') and self.cam_thread.isRunning():
-            return
-
-        self.cam_thread = QThread()
-        self.cam_worker = CameraWorker(self.get_color_frame, fps=30, min_conf=0.8)
-        self.cam_worker.moveToThread(self.cam_thread)
-
-        self.cam_thread.started.connect(self.cam_worker.run)
-        self.cam_worker.frame_ready.connect(self.display_frame)
-        self.cam_worker.face_detected.connect(self.on_face_detected)
-        self.cam_worker.finished.connect(self.cam_thread.quit)
-        self.cam_worker.finished.connect(self.cam_worker.deleteLater)
-        self.cam_thread.finished.connect(self.cam_thread.deleteLater)
-
-        self.cam_thread.start()
-
-
-    def display_frame(self, qt_image):
-        self.full_camera.setPixmap(QPixmap.fromImage(qt_image))
-
-    def closeEvent(self, event):
-        # 안전하게 종료
-        if hasattr(self, 'cam_worker'):
-            self.cam_worker.stop()
-        event.accept()
-
-
-def main():
-    # GPU 충돌 방지용 환경 변수
-    os.environ["QT_OPENGL"] = "software"
-
-    app = QApplication(sys.argv)
-    window = WindowClass()
-    window.show()
-    sys.exit(app.exec())
-    
-    rclpy.shutdown()
+    def run(self):
+        self.ui.show()
+        code = self.app.exec_()
+        # 안전 정리
+        self.ensure_ros_stopped()
+        sys.exit(code)
 
 
 if __name__ == "__main__":
-    main()
+    MonitoringApp().run()

@@ -12,7 +12,7 @@ class GuideTracking(QWidget):
         self.piece_img = None   # 이미지 표시용 QLabel
         self.description_label = None  # 설명/상태 표시용 QLabel
 
-    def set_ui(self, *, cam_label, info_label, topic="/artwork/show"):
+    def set_ui(self, *, cam_label, info_label, topic="/robot8/now_loc"):
         self.piece_img = cam_label
         self.description_label = info_label
 

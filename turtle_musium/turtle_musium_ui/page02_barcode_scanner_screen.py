@@ -92,8 +92,8 @@ class BarcodeScannerApp(QWidget):
             self.scanner_worker.stop()
         except (AttributeError, TypeError):
             pass
-        self.barcode_info_label.setText("바코드가 없으신가요?\n[취소] 버튼을 눌러주세요.")  # 상태 표시
-        self.barcode_cam_label.setText("카메라 화면")
+        # self.barcode_info_label.setText("바코드가 없으신가요?\n[취소] 버튼을 눌러주세요.")  # 상태 표시
+        # self.barcode_cam_label.setText("카메라 화면")
 
 
 if __name__ == "__main__":

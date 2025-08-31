@@ -24,7 +24,7 @@
      </rect>
     </property>
     <property name="currentIndex">
-     <number>2</number>
+     <number>1</number>
     </property>
     <widget class="QWidget" name="page01_start">
      <widget class="QPushButton" name="open_btn">
@@ -87,7 +87,7 @@
         <x>130</x>
         <y>390</y>
         <width>531</width>
-        <height>101</height>
+        <height>181</height>
        </rect>
       </property>
       <property name="text">
@@ -123,9 +123,7 @@
       </property>
      </widget>
     </widget>
-    <widget class="QWidget" name="page04_description"/>
-    <widget class="QWidget" name="page05_multi_robot_cam"/>
-    <widget class="QWidget" name="page06_exit_webcam">
+    <widget class="QWidget" name="page04_exit_webcam">
      <widget class="QLabel" name="webcam_label">
       <property name="geometry">
        <rect>
@@ -153,7 +151,7 @@
       </property>
      </widget>
     </widget>
-    <widget class="QWidget" name="page07_final">
+    <widget class="QWidget" name="page05_final">
      <widget class="QLabel" name="db_label">
       <property name="geometry">
        <rect>

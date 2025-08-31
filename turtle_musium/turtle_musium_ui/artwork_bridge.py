@@ -8,15 +8,15 @@ from std_msgs.msg import String
 
 # 1) 작품 ID -> (이미지 경로, 설명) 매핑
 PIECE_DB = {
-    "piece1": {
+    "gallery_A": {
         "image": "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/images/piece1.png",
         "desc":  "〈작품 1〉\n작가: OOO\n설명: …",
     },
-    "piece2": {
+    "gallery_B": {
         "image": "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/images/piece2.png",
         "desc":  "〈작품 2〉\n작가: OOO\n설명: …",
     },
-    "piece3": {
+    "gallery_C": {
         "image": "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/images/piece3.jpg",
         "desc":  "〈작품 3〉\n작가: OOO\n설명: …",
     },
