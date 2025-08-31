@@ -20,6 +20,11 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
+            'robot9_main=turtle_musium.robot9_move:main',
+            'tracker9=turtle_musium.tracker9:main',
+            'detect9=turtle_musium.detect_publisher9:main',
+
+
         ],
     },
 )

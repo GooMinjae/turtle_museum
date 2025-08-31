@@ -121,7 +121,7 @@ class YoloPerson(Node):
             self.get_logger().error(f"Sync decode failed: {e}")
     def callback_painting(self,request,response):
         self.should_infer = True
-        if self.label in ("pice_1","pice_2","pice_3"):
+        if self.label in ("bottle","pice_2","pice_3"):
             response.success = True
             self.label = None
             self.should_infer = False

@@ -23,9 +23,8 @@ class tracker_node(Node):
         self.close_enough_distance = 1.0
 
         self.create_subscription(PointStamped,'/robot9/point_camera',self.callback_depth,10)
-        self.target_result = 'person'
-        self.create_subscription(String,'/robot9/tracking_object',self.callback_result,10)
-        self.pub_done = self.create_publisher(Bool,'/robot9/is_done_gift',10)
+
+        self.pub_stay = self.create_publisher(Bool,'/robot9/gift_stay',10)
         self.sub_gift_start = self.create_subscription(Bool,'/robot9/giftshop',self.callback_giftshop,10)
 
         self.latest_map_point = None
@@ -38,23 +37,17 @@ class tracker_node(Node):
 
         # self.create_timer(0.5, self.process_frame)
 
-    def callback_result(self,msg):
-        self.target_result = msg.data
-        self.get_logger().info(f"{msg.data}")
+
 
     def callback_giftshop(self,msg: Bool):
         self.gift_put = msg.data
             
     def callback_depth(self,pt):
-        if self.target_result == 'person' or self.gift_put:
+
             try:
-                self.get_logger().info(f"traget_result={self.target_result}")
-                if self.target_result == 'bottle':
-                    pt.point.z = pt.point.z - 0.3
 
+                pt.point.z = pt.point.z - 0.3
 
-                elif self.target_result == 'person':
-                    pt.point.z = pt.point.z - 0.3
 
 
 
@@ -138,9 +131,10 @@ class tracker_node(Node):
     def goal_result_callback(self, future):
         result = future.result().result
         self.get_logger().info(f"Goal finished with result code: {future.result().status}")
-
-        self.pub_done.publish(Bool(data=True))
-        self.get_logger().info("pub_True")
+        if self.gift_put:
+            self.pub_stay.publish(Bool(data=True))
+            self.get_logger().info("pub_True")
+            self.gift_put = False
 
         self.goal_handle = None
 

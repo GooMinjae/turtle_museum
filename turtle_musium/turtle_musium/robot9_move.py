@@ -22,7 +22,7 @@ class Robot9ToMain(Node):
         if USE_ROBOT:
             self.navigator = TurtleBot4Navigator()
             self.navigator.undock()
-            initial_pose = self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH) # undock pose 
+            initial_pose = self.navigator.getPoseStamped([-0.23, 0.28], TurtleBot4Directions.SOUTH) # undock pose 
             self.navigator.setInitialPose(initial_pose)
 
             self.get_logger().info("set initial pose")
@@ -31,49 +31,57 @@ class Robot9ToMain(Node):
             self.get_logger().info("NAV2")
             self.gift_result = False
             self.patrol = True
-
+            self.gift_stay = False
             self.goal_options = {
                     'home': self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH),
 
-                    'entrance': self.navigator.getPoseStamped([0.0, 0.0], TurtleBot4Directions.SOUTH),
-                    # 'living_room': self.navigator.getPoseStamped([-2.09, -0.24], np.rad2deg(0.56)),
-                    'painting_1': self.navigator.getPoseStamped([-2.09, -0.24], TurtleBot4Directions.WEST),
-                    # 'kitchen': self.navigator.getPoseStamped([-2.09, 0.58], np.rad2deg(0.74)),
-                    'painting_2': self.navigator.getPoseStamped([-1.1, 2.1], TurtleBot4Directions.SOUTH),
-                    # 'bed_room': self.navigator.getPoseStamped([-0.59, 2.21], np.rad2deg(-0.57)),
-                    'painting_3': self.navigator.getPoseStamped([-0.59, 2.21], TurtleBot4Directions.EAST),
-                    'exit': self.navigator.getPoseStamped([-0.59, 2.21], TurtleBot4Directions.EAST),
-                    'gift_shop': self.navigator.getPoseStamped([-0.59, 2.21], TurtleBot4Directions.EAST),
-                    'gift_stay': self.navigator.getPoseStamped([-0.59, 2.21], TurtleBot4Directions.EAST),
-                    'Exit': None
+                    'entrance': self.navigator.getPoseStamped([-1.97, 5.25], TurtleBot4Directions.SOUTH),
+                    'painting_1': self.navigator.getPoseStamped([-0.23, 4.67], TurtleBot4Directions.NORTH),
+                    'painting_2': self.navigator.getPoseStamped([-1.71, 3.93], TurtleBot4Directions.SOUTH),
+                    'painting_3': self.navigator.getPoseStamped([-0.98, 2.06], TurtleBot4Directions.NORTH),
+                    'exit': self.navigator.getPoseStamped([-2.7, 1.62], TurtleBot4Directions.WEST),
+                    'gift_shop': self.navigator.getPoseStamped([-1.72, -0.09], TurtleBot4Directions.SOUTH),
+                    'gift_stay': self.navigator.getPoseStamped([-1.37, 0.61], TurtleBot4Directions.WEST),
                 }
-            self.get_robot_position = self.create_subscription(
-                PoseWithCovarianceStamped, '/robot8/amcl_pose', self.cb_robot_position, 10
-            )
-        self.sub_person_exit = self.create_subscription(Bool,'',self.callback_start,10)
-        self.sub_gift = self.create_subscription(Bool, '', self.callback_gift_result, 10)
-        self.sub_gfit_stay = self.create_subscription(Bool,'/robot9/gift_on',self.callback_gift_stay,10)
-        self.sub_guide_end = self.create_subscription(Bool,'',self.callback_guide_end,10)
-
+            # self.goal_options = {
+            #     'home': {'pose': [0.0, 0.0], 'direction': TurtleBot4Directions.SOUTH},
+            #     'entrance': {'pose': [-1.97, 5.25], 'direction': TurtleBot4Directions.SOUTH},
+            #     'painting_1': {'pose': [-0.23, 4.67], 'direction': TurtleBot4Directions.NORTH},
+            #     'painting_2': {'pose': [-1.71, 3.93], 'direction': TurtleBot4Directions.SOUTH},
+            #     'painting_3': {'pose': [-0.98, 2.06], 'direction': TurtleBot4Directions.NORTH},
+            #     'exit': {'pose': [-2.7, 1.62], 'direction': TurtleBot4Directions.WEST},
+            #     'gift_shop': {'pose': [-1.72, -0.09], 'direction': TurtleBot4Directions.SOUTH},
+            #     'gift_stay': {'pose': [-1.37, 0.61], 'direction': TurtleBot4Directions.WEST},
+            #     'Exit': None
+            # }
+            # self.get_robot_position = self.create_subscription(
+            #     PoseWithCovarianceStamped, '/robot8/amcl_pose', self.cb_robot_position, 10
+            # )
+        self.sub_person_exit = self.create_subscription(Bool,'/robot9/person_exit',self.callback_start,10)
+        self.sub_gift = self.create_subscription(Bool, '/robot9/gift', self.callback_gift_result, 10)
+        self.sub_gfit_stay = self.create_subscription(Bool,'/robot9/gift_stay',self.callback_gift_stay,10)
+        self.sub_guide_end = self.create_subscription(Bool,'/robot9/guide_done',self.callback_guide_end,10)
+        
         self.pub_gift_start = self.create_publisher(Bool,'/robot9/gift_start',10)
         self.pub_person = self.create_publisher(Bool,'/robot9/person',10)
 
 
-
+    # giftshop 출발
     def callback_gift_result(self, msg: Bool):
         if msg.data:
-            self.get_logger().warn("인터럽트 신호 수신! 동작 중단 요청")
+            self.get_logger().warn("gift shop go")
             self.gift_result = True
             self.patrol = False
-
+    # 기념품 가져오고 대기
     def callback_gift_stay(self,msg: Bool):
         if msg:
             self.go_to_pose_and_check(self.goal_options['gift_stay'])
             self.gift_stay = True
-            
+    # 가이드로봇 가이드 끝        
     def callback_guide_end(self,msg: Bool):
         if msg and self.gift_stay:
             self.pub_person.publish(msg)
+            self.gift_stay = False
 
     def callback_start(self, msg: String):
         person = Bool()
@@ -94,14 +102,14 @@ class Robot9ToMain(Node):
                     self.perform_interrupt_action()
                     return
 
-                result = self.go_to_pose_and_check(self.goal_options[location])
+                result = self.go_to_pose_and_check(location)
                 if result:
                     self.perform_interrupt_action()
                     return
-                if location not in ('exit','entrance'): 
-                    if not self.call_check_painting_service():
-                        self.get_logger().info("그림 없음, 경로 종료.")
-                        return
+                # if location not in ('exit','entrance'): 
+                #     if not self.call_check_painting_service():
+                #         self.get_logger().info("그림 없음, 경로 종료.")
+                #         return
 
 
     def go_to_pose_and_check(self, location_name):
