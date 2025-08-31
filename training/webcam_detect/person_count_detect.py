@@ -3,8 +3,8 @@ from ultralytics import YOLO
 
 class person_count_detect():
     def __init__(self):
-        self.model = YOLO("yolov8n.pt")  # COCO 기본 가중치
-        self.cap = cv2.VideoCapture(0)    # 0=웹캠. 파일이면 "video.mp4"
+        self.model = YOLO("/home/rokey/turtlebot4_ws/src/training/runs/detect/web_8n/weights/best.pt")  # COCO 기본 가중치
+        self.cap = cv2.VideoCapture(2)    # 0=웹캠. 파일이면 "video.mp4"
 
     def person_count_detect(self):
 

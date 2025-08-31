@@ -5,7 +5,7 @@ import time
 
 try:
     # 모델 로드
-    model = YOLO('/home/rokey/train_ws/src/runs/detect/yolov8-custom-org_dataset2/weights/best.pt')
+    model = YOLO('/home/rokey/turtlebot4_ws/src/training/runs/detect/web_8n/weights/best.pt')
 
     # 웹캠 연결
     # 0은 보통 기본 웹캠을 의미합니다. 다른 웹캠을 사용하려면 숫자를 변경하세요.

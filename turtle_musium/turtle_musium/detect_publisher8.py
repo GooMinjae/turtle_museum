@@ -5,7 +5,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy
 
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from geometry_msgs.msg import PointStamped
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 
 from cv_bridge import CvBridge
 from ultralytics import YOLO
@@ -32,6 +32,7 @@ class YoloPerson(Node):
         self.camera_frame = None
         self.shutdown_requested = False
         self.logged_intrinsics = False
+        self.inference_active = False
 
         self._pair_lock = threading.Lock()
         self._latest_pair = None
@@ -53,12 +54,13 @@ class YoloPerson(Node):
         qos_profile = QoSProfile(depth=2)
         qos_profile.reliability = QoSReliabilityPolicy.BEST_EFFORT
 
+        self.create_subscription(Bool, '/robot8/people_check', self.people_check_cb, 10)
         self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
 
         self.rgb_sub = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed', qos_profile=qos_profile)
         self.depth_sub = Subscriber(self, Image, '/robot8/oakd/stereo/image_raw', qos_profile=qos_profile)
 
-        self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.3)
+        self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.4)
         self.ts.registerCallback(self.synced_rgb_depth_cb)
 
         # === Threads ===
@@ -72,6 +74,13 @@ class YoloPerson(Node):
     # ---------------------------
     # Callbacks & processing
     # ---------------------------
+    def people_check_cb(self, msg: Bool):
+        if msg.data:
+            self.get_logger().info("People check True -> start inference")
+            self.inference_active = True
+        else:
+            self.inference_active = False
+
     def camera_info_callback(self, msg):
         self.K = np.array(msg.k).reshape(3, 3)
         if not self.logged_intrinsics:
@@ -120,6 +129,8 @@ class YoloPerson(Node):
             time.sleep(0.2)
 
     def process_frame(self):
+        if not self.inference_active:
+            return
         if self.K is None:
             return
         if not self.infer_lock.acquire(blocking=False):
@@ -159,7 +170,7 @@ class YoloPerson(Node):
                     any_main = True
 
                 # Publish 3D point
-                if label in ("car", "bottle"):
+                if label in ("person"):
                     u = (x1 + x2) // 2
                     v = (y1 + y2) // 2
                     if not (0 <= u < W and 0 <= v < H):
@@ -186,7 +197,6 @@ class YoloPerson(Node):
             self.display_frame = frame
             self.last_processed_stamp = pair.stamp
             # self.get_logger().info("Camera intrinsics received")
-
 
         finally:
             self.infer_lock.release()
