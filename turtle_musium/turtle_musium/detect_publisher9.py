@@ -39,11 +39,13 @@ class YoloPerson(Node):
         self.infer_lock = threading.Lock()
         self.last_processed_stamp = None
         self.person_detect = False
-
-
+        self.label = None
+        self.processing_done_event = threading.Event()  # Event 객체
+        self.response_event = threading.Event()  # Response 이벤트
+        self.response = None
         # === Load YOLO model ===
         self.model = YOLO(
-            "/home/rokey/turtlebot4_ws/src/training/runs/detect/yolov8-turtlebot4-custom2/weights/best.pt"
+            "/home/rokey/Downloads/detect/web_8n_batch32/weights/best.pt"
         )
         self.model.to('cuda')
         self.get_logger().info("YOLOv8 model loaded.")
@@ -57,6 +59,8 @@ class YoloPerson(Node):
         self.sub_gift_start = self.create_subscription(Bool,'/robot9/gift_start',self.callback_gift_start,10)
         self.sub_person = self.create_subscription(Bool,'/robot9/person',self.callback_person,10)
         self.put_giftshop = self.create_publisher(Bool,'/robot9/gift_shop',10)
+        # self.put_painting = self.create_publisher(String,'/robot9/painting',10)
+        # self.sub_painting = self.create_subscription(Bool,'/robot9/paint_check',self.callback_painting,10)
 
         qos_profile = QoSProfile(depth=2)
         qos_profile.reliability = QoSReliabilityPolicy.BEST_EFFORT
@@ -119,14 +123,44 @@ class YoloPerson(Node):
 
         except Exception as e:
             self.get_logger().error(f"Sync decode failed: {e}")
-    def callback_painting(self,request,response):
-        self.should_infer = True
-        if self.label in ("bottle","pice_2","pice_3"):
-            response.success = True
-            self.label = None
-            self.should_infer = False
+    def callback_painting(self, request, response):
+        self.get_logger().info("Start processing painting request")
+        
+        # 이미지 처리
+        self.handle_painting_request(response)
+        
+        # 응답 반환
+        return response
 
-            return response
+    def handle_painting_request(self, response):
+        self.should_infer = True
+
+        # 시간 제한을 두고 기다리도록 함 (예: 100초)
+        timeout = 100  # timeout in seconds
+        start_time = time.time()
+
+        # self.label이 pice1, pice2, pice3 중 하나가 될 때까지 확인
+        while self.label not in ("pice 1", "pice2", "pice3"):
+            self.get_logger().info(f"{self.label}")
+            if time.time() - start_time > timeout:
+                self.get_logger().warn("Timeout reached, no valid label detected.")
+                response.success = False
+                break
+
+            # 반복적으로 인식을 위해 잠시 대기
+            time.sleep(0.1)
+            if self.label in ("pice 1", "pice2", "pice3"):
+                break
+
+        # label이 pice1, pice2, pice3 중 하나가 되면
+        response.success = True
+        self.label = None  # label 초기화 (필요한 경우)
+        self.should_infer = False  # inference을 중지
+        self.get_logger().info("response")
+
+
+
+
     def callback_person(self,msg: Bool):
         self.should_infer = msg.data
         if msg.data:
@@ -181,6 +215,11 @@ class YoloPerson(Node):
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, f"{self.label} {conf:.2f}", (x1, max(0, y1-5)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                self.get_logger().info(f"{self.label}")
+                # msg = String()
+                # msg.data = self.label
+                # self.put_painting.publish(msg)
+                
                 if (self.label == 'person' and self.person_detect) or self.label == 'gift_data':
                     u = (x1 + x2) // 2
                     v = (y1 + y2) // 2
@@ -214,6 +253,7 @@ class YoloPerson(Node):
 
         finally:
             self.infer_lock.release()
+            # self.processing_done_event.set()
 
     # ---------------------------
     # Display loop

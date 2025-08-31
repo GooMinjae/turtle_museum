@@ -27,8 +27,8 @@ class Robot9ToMain(Node):
 
             self.get_logger().info("set initial pose")
 
-            self.navigator.waitUntilNav2Active()
-            self.get_logger().info("NAV2")
+            # self.navigator.waitUntilNav2Active()
+            # self.get_logger().info("NAV2")
             self.gift_result = False
             self.patrol = True
             self.gift_stay = False
@@ -64,6 +64,7 @@ class Robot9ToMain(Node):
         
         self.pub_gift_start = self.create_publisher(Bool,'/robot9/gift_start',10)
         self.pub_person = self.create_publisher(Bool,'/robot9/person',10)
+        # self.pub_check = self.create_publisher(Bool,"/robot9/paint_check",10)
 
 
     # giftshop 출발
@@ -106,10 +107,10 @@ class Robot9ToMain(Node):
                 if result:
                     self.perform_interrupt_action()
                     return
-                # if location not in ('exit','entrance'): 
-                #     if not self.call_check_painting_service():
-                #         self.get_logger().info("그림 없음, 경로 종료.")
-                #         return
+                if location not in ('exit','entrance'): 
+                    if not self.call_check_painting_service():
+                        self.get_logger().info("그림 없음, 경로 종료.")
+                        return
 
 
     def go_to_pose_and_check(self, location_name):
