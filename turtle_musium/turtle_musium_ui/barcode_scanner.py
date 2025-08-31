@@ -22,7 +22,12 @@ class BarcodeScannerWorker(QObject):
     def __init__(self):
         super().__init__()
         self.running = False
-        self.cap = cv2.VideoCapture(0)
+        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+
         self.thread = None  # 스레드 객체
 
     def start(self):
@@ -74,11 +79,11 @@ class BarcodeScannerWorker(QObject):
 
 
 if __name__ == "__main__":
-    cap = cv2.VideoCapture(0)
+    # cap = cv2.VideoCapture(0)
     worker = BarcodeScannerWorker()
 
     while True:
-        ret, frame = cap.read()
+        ret, frame = worker.cap.read()
         if not ret:
             print("카메라를 열 수 없습니다.")
             break
@@ -98,5 +103,5 @@ if __name__ == "__main__":
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    cap.release()
+    worker.cap.release()
     cv2.destroyAllWindows()

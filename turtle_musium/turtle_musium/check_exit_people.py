@@ -9,7 +9,7 @@ from rclpy.node import Node
 from std_msgs.msg import Bool
 
 MODEL_PATH = "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/exit_people.pt"
-CONF_THRES = 0.9
+CONF_THRES = 0.8
 CAM_IDX = 2
 TOPIC_NAME = "/exit/people_detected"
 
@@ -25,7 +25,11 @@ class ExitPeopleWorker(Node):
     def __init__(self):
         super().__init__('exit_people_worker')
         self.running = False
-        self.cap = cv2.VideoCapture(CAM_IDX)
+        self.cap = cv2.VideoCapture(CAM_IDX, cv2.CAP_V4L2)
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
         self.model = YOLO(MODEL_PATH)
 
 
@@ -54,7 +58,7 @@ class ExitPeopleWorker(Node):
             if not ret:
                 break
 
-            frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+            # frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
 
             processed_frame, detected = self.recognize_exit_people(frame)
             # self.frameCaptured.emit(processed_frame)
@@ -101,29 +105,6 @@ class ExitPeopleWorker(Node):
         if self.thread:
             self.thread.join()
 
-
-# if __name__ == "__main__":
-#     cap = cv2.VideoCapture(CAM_IDX)
-#     worker = ExitPeopleWorker()
-
-#     while True:
-#         ret, frame = cap.read()
-#         if not ret:
-#             print("카메라를 열 수 없습니다.")
-#             break
-
-#         frame, detected = worker.recognize_exit_people(frame)
-#         cv2.imshow("Barcode Scanner", frame)
-
-#         if detected:
-#             print("사람 감지됨")
-#             break
-
-#         if cv2.waitKey(1) & 0xFF == ord('q'):
-#             break
-
-#     cap.release()
-#     cv2.destroyAllWindows()
 
 
 def main():
