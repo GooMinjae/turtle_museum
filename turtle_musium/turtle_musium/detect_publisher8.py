@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.qos import QoSProfile, QoSReliabilityPolicy
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from geometry_msgs.msg import PointStamped
@@ -33,6 +33,9 @@ class YoloPerson(Node):
         self.shutdown_requested = False
         self.logged_intrinsics = False
         self.inference_active = False
+        self.target_id = None
+        self.lost_count = 0
+        self.MAX_LOST = 10  # 타겟 분실 후 재획득까지 허용 프레임 수
 
         self._pair_lock = threading.Lock()
         self._latest_pair = None
@@ -51,8 +54,11 @@ class YoloPerson(Node):
         self.person_point_cam_pub = self.create_publisher(PointStamped, '/robot8/point_camera', 10)
 
         # === Subscriptions ===
-        qos_profile = QoSProfile(depth=2)
-        qos_profile.reliability = QoSReliabilityPolicy.BEST_EFFORT
+        qos_profile = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,  # 최신 depth 개수만 유지
+            depth=10,                            # 큐 크기 (10개 유지)
+            reliability=QoSReliabilityPolicy.BEST_EFFORT
+        )
 
         self.create_subscription(Bool, '/robot8/people_check', self.people_check_cb, 10)
         self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)

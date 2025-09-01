@@ -8,6 +8,8 @@ from rclpy.node import Node  # ROS2 노드 기본 클래스
 from voice_processing import tts
 from std_msgs.msg import String
 from rclpy.time import Time
+from transforms3d.euler import euler2quat
+
 
 import tf2_geometry_msgs  # PointStamped 등 TF 변환 타입 지원을 위한 임포트(실사용은 없지만 등록 용도)
 # --------- ROS2 유틸/시간/수학/외부프로세스 ---------
@@ -29,15 +31,13 @@ class TrackerPersonNode(Node):
         super().__init__('tracker_person_node')  # 노드 이름 설정
 
         # ---------- 파라미터 선언(기본값 포함) ----------
-        self.declare_parameter('map_frame', 'map')  # TF 변환 대상 프레임
-        self.declare_parameter('close_enough_distance', 1.0)  # 근접 판정 임계값(m)
+        self.declare_parameter('close_enough_distance', 0.1)  # 근접 판정 임계값(m)
         self.declare_parameter('min_goal_interval_sec', 0.5)  # 목표 갱신 최소 시간 간격(s)
-        self.declare_parameter('min_goal_translation', 0.15)  # 목표 갱신 최소 이동 거리(m)
+        self.declare_parameter('min_goal_translation', 0.05)  # 목표 갱신 최소 이동 거리(m)
         self.declare_parameter('approach_offset', 0.3)  # 사람에게 다가갈 때 z축으로 뺄 거리(m)
         self.declare_parameter('zone_check_hz', 10.0)  # 존 체크 주파수(Hz)
         self.declare_parameter('tts_command', 'espeak -s 160 -v ko+f3 "{text}"')  # 로컬 TTS 명령 템플릿
         
-        # NOTE: 이 부분이 수정된 부분입니다.
         # zones: ROS 2 파라미터가 아닌, 일반적인 클래스 변수로 직접 정의합니다.
         self.zones = [
             {'name': 'gallery_A', 'x': -1.02, 'y': -0.74, 'radius': 1,
@@ -51,7 +51,7 @@ class TrackerPersonNode(Node):
         # ---------- 파라미터 실제 값 가져오기 ----------
         # zones는 파라미터가 아니므로 get_parameter()로 가져오지 않습니다.
         self._last_tf_warn_ns = 0
-        self.map_frame = self.get_parameter('map_frame').value
+        # self.map_frame = self.get_parameter('map_frame').value
         self.close_enough_distance = float(self.get_parameter('close_enough_distance').value)
         self.min_goal_interval = float(self.get_parameter('min_goal_interval_sec').value)
         self.min_goal_translation = float(self.get_parameter('min_goal_translation').value)
@@ -86,8 +86,7 @@ class TrackerPersonNode(Node):
         self.robot_xy = None                  # AMCL로 받은 로봇 현재 위치
 
         self.paused_for_zone = False          # 존 설명 중 일시정지 상태
-        self.active_zone = None               # 현재 설명 중인 존 이름
-        # zones를 파라미터로 가져오지 않으므로, 이 부분도 수정합니다.
+        self.active_zone = None               # 현재 설명 중인 존 이름.
         self.zone_inside_flags = {z['name']: False for z in self.zones}  # 존 재진입 방지 히스테리시스
 
         # ---------- 존 체크 타이머 ----------
@@ -106,38 +105,19 @@ class TrackerPersonNode(Node):
         if self.paused_for_zone or self.block_goal_updates:
             return  # 존 설명 중이거나 근접 래치면 목표 갱신 중단
 
-        # 들어오는 프레임명 확인(비어 있으면 로그)
-        src_frame = pt.header.frame_id or ''
-        if not src_frame:
-            self.get_logger().warn('PointStamped.header.frame_id is empty; set the camera frame in publisher.')
-            # 필요하다면 기본값 강제 지정 (예: 'camera_link')
-            src_frame = 'camera_link'
-            pt.header.frame_id = src_frame
-
         # 사람에게 너무 가까이 붙지 않도록 목표 z 조정
         if pt.point.z > self.approach_offset:
             pt.point.z = pt.point.z - self.approach_offset
+        else:
+            pt.point.z = self.approach_offset
 
-        # --- 변환 가능 여부 사전 체크 ---
-        tgt_frame = self.map_frame  # 보통 'map'
-        # 타임스탬프는 최신값으로 보간되도록 Time() 사용
-        if not self.tf_buffer.can_transform(tgt_frame, src_frame, Time(), timeout=Duration(seconds=0.0)):
-            now_ns = self.get_clock().now().nanoseconds
-            if now_ns - self._last_tf_warn_ns > int(5e8):  # 0.5s 스로틀
-                self._last_tf_warn_ns = now_ns
-                self.get_logger().warn(
-                    f'TF "{src_frame}" -> "{tgt_frame}" not available. '
-                    f'AMCL/SLAM(map) 또는 static TF 체인을 확인하세요.'
-                )
-            return
 
-        # --- 실제 변환 ---
         try:
-            pt_map = self.tf_buffer.transform(pt, tgt_frame, timeout=Duration(seconds=0.2))
+            pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
             self.latest_map_point = pt_map
             xy = (pt_map.point.x, pt_map.point.y)
         except Exception as e:
-            self.get_logger().warn(f'TF transform failed {src_frame}->{tgt_frame}: {e}')
+            self.get_logger().warn(f'TF transform failed {e}')
             return
 
         # ---- 디바운스(시간/거리) 기존 로직 유지 ----
@@ -162,11 +142,20 @@ class TrackerPersonNode(Node):
     # ===================== 헬퍼: Goal 송신 =====================
     def _send_goal(self, xy):
         # PoseStamped 헤더/포지션 설정
-        self.pose.header.frame_id = self.map_frame  # 목표 프레임은 map
+        self.pose.header.frame_id = 'map'  # 목표 프레임은 map
         self.pose.header.stamp = self.get_clock().now().to_msg()  # 현재 시간 스탬프
         self.pose.pose.position.x = xy[0]  # 목표 x
         self.pose.pose.position.y = xy[1]  # 목표 y
-        self.pose.pose.orientation.w = 1.0  # 간단히 yaw=0 (필요하면 atan2로 yaw 계산 가능)
+        # 로봇 현재 위치와 목표 좌표 차이로 yaw 계산
+        if self.robot_xy is not None:
+            dx = xy[0] - self.robot_xy[0]
+            dy = xy[1] - self.robot_xy[1]
+            yaw = math.atan2(dy, dx)
+            q = euler2quat(0, 0, yaw)  # w, x, y, z 순서
+            self.pose.pose.orientation.x = q[1]
+            self.pose.pose.orientation.y = q[2]
+            self.pose.pose.orientation.z = q[3]
+            self.pose.pose.orientation.w = q[0]
 
         # 액션 Goal 메시지에 포즈를 담기
         goal = NavigateToPose.Goal()
@@ -215,9 +204,17 @@ class TrackerPersonNode(Node):
 
     # ===================== 콜백: 액션 완료 결과 =====================
     def _goal_result_cb(self, future):
-        status = future.result().status  # 종료 상태 코드
-        self.get_logger().info(f"Goal finished with result code: {status}")  # 상태 출력
-        self.goal_handle = None  # 현재 goal 핸들 비우기
+        status = future.result().status
+        self.get_logger().info(f"Goal finished with result code: {status}")
+        self.goal_handle = None
+
+        # 최신 위치가 이전 Goal과 충분히 다를 때만 재전송
+        if self.latest_map_point is not None:
+            xy = (self.latest_map_point.point.x, self.latest_map_point.point.y)
+            if self.last_goal_xy is None or math.hypot(xy[0]-self.last_goal_xy[0], xy[1]-self.last_goal_xy[1]) > self.min_goal_translation:
+                self._send_goal(xy)
+                self.last_goal_send_time = time.time()
+                self.last_goal_xy = xy
 
 # ===================== 존 로직: 타이머 콜백 =====================
     def zone_check_tick(self):
