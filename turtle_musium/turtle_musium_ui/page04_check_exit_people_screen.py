@@ -2,15 +2,18 @@
 import cv2, os
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtGui import QImage, QPixmap
-from PyQt5.QtCore import Qt
-from check_exit_people import ExitPeopleWorker
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from turtle_musium_ui.check_exit_people import ExitPeopleWorker
+# from check_exit_people import ExitPeopleWorker
 
 class CheckExitCamScreen(QWidget):
+    goNext = pyqtSignal()
     def __init__(self):
         super().__init__()
         self.worker = None
         self.check_exit_cam_label  = None
         self.check_exit_info_label = None
+        self._timer_started = False
 
     def set_ui(self, *, cam_label, info_label):
         self.check_exit_cam_label  = cam_label
@@ -39,9 +42,17 @@ class CheckExitCamScreen(QWidget):
         self.check_exit_cam_label.setPixmap(pix)
 
     def on_detected(self, _):
-        self.check_exit_info_label.setText("출구에 사람 감지됨!")
-        # 필요시 자동 종료
-        # self.close_app()
+        self.check_exit_info_label.setText("출구에 사람 감지됨! 5초 후 다음 단계로 이동합니다…")
+        if self._timer_started:
+            return
+        self._timer_started = True
+
+        # stop_on_detect=True라 워커는 이미 멈춰있음(카메라 해제).
+        QTimer.singleShot(5000, self._emit_go_next)
+
+
+    def _emit_go_next(self):
+        self.goNext.emit()
 
     def on_error(self, msg):
         self.check_exit_cam_label.setText("카메라 오류")

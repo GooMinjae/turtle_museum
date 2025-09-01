@@ -24,7 +24,7 @@
      </rect>
     </property>
     <property name="currentIndex">
-     <number>1</number>
+     <number>4</number>
     </property>
     <widget class="QWidget" name="page01_start">
      <widget class="QPushButton" name="open_btn">
@@ -155,8 +155,8 @@
      <widget class="QLabel" name="db_label">
       <property name="geometry">
        <rect>
-        <x>150</x>
-        <y>80</y>
+        <x>130</x>
+        <y>110</y>
         <width>511</width>
         <height>231</height>
        </rect>
@@ -176,6 +176,19 @@
       </property>
       <property name="text">
        <string>폐장</string>
+      </property>
+     </widget>
+     <widget class="QLabel" name="final_info_label">
+      <property name="geometry">
+       <rect>
+        <x>140</x>
+        <y>30</y>
+        <width>521</width>
+        <height>51</height>
+       </rect>
+      </property>
+      <property name="text">
+       <string>통계 - DB 연동 및 robots condition</string>
       </property>
      </widget>
     </widget>

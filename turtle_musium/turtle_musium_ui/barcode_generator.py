@@ -49,19 +49,19 @@ class BarcodeGenerator:
 # 외부에서 호출 예시
 DUMMY = [
     {
-        "count_people": "3",
-        "gift_data": "1001",
+        "count_people": "2",
+        "gift_data": "1100",
     },
     {
-        "count_people": "2",
-        "gift_data": "0110",
+        "count_people": "3",
+        "gift_data": "1200",
     }
 ]
 if __name__ == "__main__":
-    dummy_idx = 1
+    dummy_idx = 0
     barcode_generator = BarcodeGenerator(
         count_people=DUMMY[dummy_idx]["count_people"], 
         gift_data=DUMMY[dummy_idx]["gift_data"],
-        directory="/home/rokey/turtlebot4_ws/src/turtle_musium/turtle_musium"
+        directory="/home/rokey/turtlebot4_ws/src/turtle_musium/turtle_musium_ui"
     )  # 원하는 금액으로 초기화
     barcode_generator.create_bar_code()  # 바코드 생성

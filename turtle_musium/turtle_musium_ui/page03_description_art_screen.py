@@ -2,10 +2,12 @@
 import os
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt
-from artwork_bridge import ArtworkBridge
+from PyQt5.QtCore import Qt, pyqtSignal
+from turtle_musium_ui.artwork_bridge import ArtworkBridge
+# from artwork_bridge import ArtworkBridge
 
 class GuideTracking(QWidget):
+    doneSignal = pyqtSignal()
     def __init__(self):
         super().__init__()
         self.bridge = None
@@ -23,6 +25,7 @@ class GuideTracking(QWidget):
         # ROS2 브리지 시작
         self.bridge = ArtworkBridge(topic)
         self.bridge.showArtwork.connect(self.on_show_artwork)
+        self.bridge.trackDone.connect(self._on_done_track)
         self.bridge.start()
 
     def on_show_artwork(self, image_path: str, description: str):
@@ -41,6 +44,14 @@ class GuideTracking(QWidget):
                 self.piece_img.setText("작품 이미지 대기 중…")
             elif not os.path.exists(image_path):
                 self.piece_img.setText("이미지 파일을 찾을 수 없습니다.")
+
+    def _on_done_track(self, is_done: bool):
+        if is_done:
+            # 안내 멘트 업데이트(선택)
+            if self.description_label:
+                self.description_label.setText("작품 설명이 완료되었습니다. 다음 단계로 이동합니다…")
+            # MonitoringApp으로 페이지 전환 신호
+            self.doneSignal.emit()
 
     def close_app(self):
         if self.bridge:

@@ -7,7 +7,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtCore import Qt
 from datetime import datetime
-from barcode_scanner import BarcodeScannerWorker
+from turtle_musium_ui.barcode_scanner import BarcodeScannerWorker
+# from barcode_scanner import BarcodeScannerWorker
 
 class BarcodeScannerApp(QWidget):
     def __init__(self, on_barcode_callback):

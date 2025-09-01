@@ -3,15 +3,20 @@ from PyQt5.QtWidgets import QApplication, QLabel
 from PyQt5.uic import loadUi
 
 # 각 페이지 컨트롤러
-from page02_barcode_scanner_screen import BarcodeScannerApp
-from page03_description_art_screen import GuideTracking
-from page04_check_exit_people_screen import CheckExitCamScreen
+from turtle_musium_ui.page02_barcode_scanner_screen import BarcodeScannerApp
+from turtle_musium_ui.page03_description_art_screen import GuideTracking
+from turtle_musium_ui.page04_check_exit_people_screen import CheckExitCamScreen
+from turtle_musium_ui.count_bridge import CountBridge
+from turtle_musium_ui.page05_exit_screen import ExitSummaryScreen
+from data_base.visit_db import insert_visit, update_counted_count
+
+# from page02_barcode_scanner_screen import BarcodeScannerApp
+# from page03_description_art_screen import GuideTracking
+# from page04_check_exit_people_screen import CheckExitCamScreen
+# from count_bridge import CountBridge
+# from visit_db import insert_visit, update_counted_count
 
 import rclpy
-
-
-from count_bridge import CountBridge
-from visit_db import insert_visit, update_counted_count
 
 UI_FILE = "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/monitoring_ui.ui"
 
@@ -27,6 +32,7 @@ class MonitoringApp:
         self.page02 = None  # BarcodeScannerApp
         self.page03 = None  # GuideTracking
         self.page04 = None  # CheckExitCamScreen
+        self.page05 = None
 
         # ROS init 상태 추적 (page04 전용)
         self.ros_active = False
@@ -70,6 +76,11 @@ class MonitoringApp:
             # page04는 rclpy 필요
             self.ensure_ros_started()
             self.start_page04()
+        elif current_widget is self.ui.page05_final:
+            # page05는 ROS 불필요
+            self.ensure_ros_stopped()
+            self.start_page05()
+
 
     # ————————————————————————
     # page02: 바코드
@@ -95,7 +106,7 @@ class MonitoringApp:
         if self.count_bridge:
             self.count_bridge.stop()
             self.count_bridge = None
-        self.current_visit_id = None
+        # self.current_visit_id = None
 
 
     def on_barcode_scanned(self, data: str):
@@ -136,12 +147,17 @@ class MonitoringApp:
             info_label = self.ui.findChild(QLabel, "description_label")
             # set_ui 안에서 ArtworkBridge가 start() 되며, 내부 스레드에서 rclpy.init()을 수행
             self.page03.set_ui(cam_label=cam_label, info_label=info_label)
+            self.page03.doneSignal.connect(self._go_to_page04)
         # 별도 start 없음 (set_ui에서 시작)
 
     def stop_page03(self):
         if self.page03:
             self.page03.close_app()  # ArtworkBridge stop() → 내부에서 rclpy.shutdown()
 
+    def _go_to_page04(self):
+        # 스택 전환만 하면 on_page_changed()가 알아서
+        # page03 정리 → ROS 내려주기 → page04용 ROS 올리기 → page04 시작까지 처리
+        self.stacked.setCurrentWidget(self.ui.page04_exit_webcam)
     # ————————————————————————
     # page04: 출구 사람 감시( YOLO + ROS Bool 퍼블리시 )
     # ————————————————————————
@@ -151,7 +167,24 @@ class MonitoringApp:
             cam_label  = self.ui.findChild(QLabel, "webcam_label")
             info_label = self.ui.findChild(QLabel, "condition_exit_label")
             self.page04.set_ui(cam_label=cam_label, info_label=info_label)
+            # 5초 후 전환 시그널 연결
+            self.page04.goNext.connect(self._after_exit_go_next)
         self.page04.start_scanning()
+
+
+    def _after_exit_go_next(self):
+        # 먼저 page05에서 데이터 세팅
+        if self.page05 is None:
+            self.page05 = ExitSummaryScreen()
+            title_label = self.ui.findChild(QLabel, "final_info_label")
+            info_label  = self.ui.findChild(QLabel, "db_label")
+            self.page05.set_ui(title_label=title_label, info_label=info_label)
+
+        if self.current_visit_id is not None:
+            self.page05.show_visit(self.current_visit_id)
+
+        # 스택 전환
+        self.stacked.setCurrentWidget(self.ui.page05_final)
 
     def stop_page04(self):
         if self.page04:
@@ -172,6 +205,19 @@ class MonitoringApp:
             except Exception:
                 pass
             self.ros_active = False
+
+
+    def start_page05(self):
+        if self.page05 is None:
+            self.page05 = ExitSummaryScreen()
+            # .ui에서 라벨 찾아 주입
+            title_label = self.ui.findChild(QLabel, "db_label")
+            info_label  = self.ui.findChild(QLabel, "final_info_label")
+            self.page05.set_ui(title_label=title_label, info_label=info_label)
+
+        # current_visit_id가 있으면 표시
+        if self.current_visit_id is not None:
+            self.page05.show_visit(self.current_visit_id)
 
     # ————————————————————————
     # 종료 처리
@@ -195,6 +241,10 @@ class MonitoringApp:
         # 안전 정리
         self.ensure_ros_stopped()
         sys.exit(code)
+
+
+def main():
+    MonitoringApp().run()
 
 
 if __name__ == "__main__":
