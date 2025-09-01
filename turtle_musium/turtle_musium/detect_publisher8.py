@@ -141,16 +141,20 @@ class YoloPerson(Node):
                 if self._latest_pair is None:
                     return
                 pair = self._latest_pair
-                # self._latest_pair = None
 
             rgb = pair.rgb.copy()
             depth = pair.depth.copy()
 
-            results = self.model.predict(rgb, conf=0.7, verbose=False)[0]
-            frame = rgb.copy()
+            # ★ 변경: predict -> track (ID 사용)
+            results = self.model.track(
+                rgb, conf=0.7, verbose=False, persist=True, tracker='bytetrack.yaml'
+            )[0]
 
+            frame = rgb.copy()
             any_main = False
             H, W = depth.shape[:2]
+
+            persons = []  # (track_id, conf, (x1,y1,x2,y2), (cx,cy))
 
             for det in results.boxes:
                 cls = int(det.cls[0])
@@ -158,45 +162,78 @@ class YoloPerson(Node):
                 conf = float(det.conf[0])
                 x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
 
+                # 시각화 (원래 코드 유지)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.putText(frame, f"{label} {conf:.2f}", (x1, max(0, y1-5)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-                # Publish gesture
+                # 제스처 퍼블리시 (원래 로직 유지)
                 if label in ("one", "five"):
                     self.main_pub.publish(String(data=label))
-                    self.get_logger().info(f"{label}")
-
                     any_main = True
 
-                # Publish 3D point
-                if label in ("person"):
-                    u = (x1 + x2) // 2
-                    v = (y1 + y2) // 2
-                    if not (0 <= u < W and 0 <= v < H):
-                        continue
+                # ★ 변경: person만 추적 candidate로 수집 (ID 포함)
+                if label == "person":
+                    # det.id가 None일 수 있어 안전 처리
+                    tid = int(det.id[0]) if getattr(det, 'id', None) is not None else -1
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    persons.append((tid, conf, (x1, y1, x2, y2), (cx, cy)))
+
+            # ★ 변경: 타겟 ID가 없으면(초기) conf가 가장 높은 사람으로 설정
+            if self.target_id is None:
+                if persons:
+                    best = max(persons, key=lambda p: p[1])  # conf 최대
+                    self.target_id = best[0] if best[0] != -1 else None
+                    self.lost_count = 0
+
+            # ★ 변경: 현재 타겟 ID와 매칭되는 detection 찾기
+            target_det = None
+            if self.target_id is not None:
+                for tid, conf, bbox, center in persons:
+                    if tid == self.target_id:
+                        target_det = (tid, conf, bbox, center)
+                        break
+
+            # ★ 변경: 타겟이 보이면 그 사람만 퍼블리시, 아니면 분실 카운트 증가
+            if target_det is not None:
+                self.lost_count = 0
+                _, _, (x1, y1, x2, y2), (u, v) = target_det
+
+                # 표시용 점
+                cv2.circle(frame, (u, v), 4, (0, 255, 0), -1)
+
+                # 3D 계산 및 퍼블리시 (원래 코드 유지)
+                if 0 <= u < W and 0 <= v < H:
                     z = float(depth[v, u])
-                    if z <= 0.0 or np.isnan(z):
-                        continue
-                    fx, fy = self.K[0, 0], self.K[1, 1]
-                    cx, cy = self.K[0, 2], self.K[1, 2]
-                    X = (u - cx) * z / fx
-                    Y = (v - cy) * z / fy
+                    if z > 0.0 and not np.isnan(z):
+                        fx, fy = self.K[0, 0], self.K[1, 1]
+                        cx0, cy0 = self.K[0, 2], self.K[1, 2]
+                        X = (u - cx0) * z / fx
+                        Y = (v - cy0) * z / fy
 
-                    pt = PointStamped()
-                    pt.header.frame_id = pair.frame_id
-                    pt.header.stamp = pair.stamp
-                    pt.point.x, pt.point.y, pt.point.z = X, Y, z
-                    self.person_point_cam_pub.publish(pt)
-                    self.get_logger().info(f"{label}")
-
+                        pt = PointStamped()
+                        pt.header.frame_id = pair.frame_id
+                        pt.header.stamp = pair.stamp
+                        pt.point.x, pt.point.y, pt.point.z = X, Y, z
+                        self.person_point_cam_pub.publish(pt)
+            else:
+                # 타겟 분실
+                self.lost_count += 1
+                if self.lost_count > self.MAX_LOST:
+                    # 너무 오래 못 보면 다시 “conf 최고”로 재획득
+                    if persons:
+                        best = max(persons, key=lambda p: p[1])
+                        self.target_id = best[0] if best[0] != -1 else None
+                        self.lost_count = 0
+                    else:
+                        self.target_id = None  # 화면에 아무도 없음
 
             if not any_main:
                 self.main_pub.publish(String(data="none"))
 
             self.display_frame = frame
             self.last_processed_stamp = pair.stamp
-            # self.get_logger().info("Camera intrinsics received")
 
         finally:
             self.infer_lock.release()
