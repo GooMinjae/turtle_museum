@@ -50,6 +50,7 @@ class TrackerPersonNode(Node):
         
         # ---------- 파라미터 실제 값 가져오기 ----------
         # zones는 파라미터가 아니므로 get_parameter()로 가져오지 않습니다.
+        self._last_tf_warn_ns = 0
         self.map_frame = self.get_parameter('map_frame').value
         self.close_enough_distance = float(self.get_parameter('close_enough_distance').value)
         self.min_goal_interval = float(self.get_parameter('min_goal_interval_sec').value)
@@ -105,43 +106,59 @@ class TrackerPersonNode(Node):
         if self.paused_for_zone or self.block_goal_updates:
             return  # 존 설명 중이거나 근접 래치면 목표 갱신 중단
 
-        try:
-            # 사람에게 너무 가까이 붙지 않도록 카메라 Z를 약간 줄여 목표를 살짝 앞에 두기
-            if pt.point.z > self.approach_offset:
-                pt.point.z = pt.point.z - self.approach_offset
+        # 들어오는 프레임명 확인(비어 있으면 로그)
+        src_frame = pt.header.frame_id or ''
+        if not src_frame:
+            self.get_logger().warn('PointStamped.header.frame_id is empty; set the camera frame in publisher.')
+            # 필요하다면 기본값 강제 지정 (예: 'camera_link')
+            src_frame = 'camera_link'
+            pt.header.frame_id = src_frame
 
-            # TF 변환: 카메라 프레임 → map 프레임 (타임아웃 0.5초)
-            pt_map = self.tf_buffer.transform(pt, self.map_frame, timeout=Duration(seconds=0.5))
-            self.latest_map_point = pt_map  # 최근 변환 결과 저장
-            xy = (pt_map.point.x, pt_map.point.y)  # 목표 좌표 (x,y) 추출
-        except Exception as e:
-            self.get_logger().warn(f'TF to "{self.map_frame}" failed: {e}')  # 변환 실패 시 경고 후 종료
+        # 사람에게 너무 가까이 붙지 않도록 목표 z 조정
+        if pt.point.z > self.approach_offset:
+            pt.point.z = pt.point.z - self.approach_offset
+
+        # --- 변환 가능 여부 사전 체크 ---
+        tgt_frame = self.map_frame  # 보통 'map'
+        # 타임스탬프는 최신값으로 보간되도록 Time() 사용
+        if not self.tf_buffer.can_transform(tgt_frame, src_frame, Time(), timeout=Duration(seconds=0.0)):
+            now_ns = self.get_clock().now().nanoseconds
+            if now_ns - self._last_tf_warn_ns > int(5e8):  # 0.5s 스로틀
+                self._last_tf_warn_ns = now_ns
+                self.get_logger().warn(
+                    f'TF "{src_frame}" -> "{tgt_frame}" not available. '
+                    f'AMCL/SLAM(map) 또는 static TF 체인을 확인하세요.'
+                )
             return
 
-        # ---- 디바운스(시간) : 너무 자주 목표를 보내지 않도록 최소 간격 보장 ----
+        # --- 실제 변환 ---
+        try:
+            pt_map = self.tf_buffer.transform(pt, tgt_frame, timeout=Duration(seconds=0.2))
+            self.latest_map_point = pt_map
+            xy = (pt_map.point.x, pt_map.point.y)
+        except Exception as e:
+            self.get_logger().warn(f'TF transform failed {src_frame}->{tgt_frame}: {e}')
+            return
+
+        # ---- 디바운스(시간/거리) 기존 로직 유지 ----
         now = time.time()
         if (now - self.last_goal_send_time) < self.min_goal_interval:
-            return  # 최소 보낸 지점 이후 min_goal_interval이 지나지 않으면 건너뜀
-
-        # ---- 디바운스(거리) : 목표 이동이 너무 작으면 무시 ----
+            return
         if self.last_goal_xy is not None:
             dx = xy[0] - self.last_goal_xy[0]
             dy = xy[1] - self.last_goal_xy[1]
             if math.hypot(dx, dy) < self.min_goal_translation:
-                return  # 이동량이 임계값보다 작으면 갱신하지 않음
+                return
 
-        # 진행 중 goal이 있으면 갱신을 위해 취소(새 goal 송신 전)
         if self.goal_handle:
             try:
-                self.goal_handle.cancel_goal_async()  # 비동기 취소 요청
+                self.goal_handle.cancel_goal_async()
             except Exception:
-                pass  # 취소 중 예외는 무시
+                pass
 
-        # 실제 goal 송신
         self._send_goal(xy)
-        self.last_goal_send_time = now  # 마지막 송신 시각 갱신
-        self.last_goal_xy = xy         # 마지막 목표 좌표 갱신
-
+        self.last_goal_send_time = now
+        self.last_goal_xy = xy
     # ===================== 헬퍼: Goal 송신 =====================
     def _send_goal(self, xy):
         # PoseStamped 헤더/포지션 설정
