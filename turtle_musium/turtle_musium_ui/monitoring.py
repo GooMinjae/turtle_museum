@@ -3,12 +3,14 @@ from PyQt5.QtWidgets import QApplication, QLabel
 from PyQt5.uic import loadUi
 
 # 각 페이지 컨트롤러
+from turtle_musium_ui.page01_init_screen import Page01InitScreen
 from turtle_musium_ui.page02_barcode_scanner_screen import BarcodeScannerApp
 from turtle_musium_ui.page03_description_art_screen import GuideTracking
 from turtle_musium_ui.page04_check_exit_people_screen import CheckExitCamScreen
 from turtle_musium_ui.count_bridge import CountBridge
 from turtle_musium_ui.page05_exit_screen import ExitSummaryScreen
 from data_base.visit_db import insert_visit, update_counted_count
+from turtle_musium_ui.share_db_bridge import Pc2Bridge
 
 # from page02_barcode_scanner_screen import BarcodeScannerApp
 # from page03_description_art_screen import GuideTracking
@@ -20,6 +22,9 @@ import rclpy
 
 UI_FILE = "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/monitoring_ui.ui"
 
+
+## 추가해야할 기능: PC2에서 작품 상황 받아오기 -> 토픽으로 받아서 db에 올리기
+##              PC2에서 기념품 개수 요청 들어오면 응답 보내주기
 class MonitoringApp:
     def __init__(self):
         self.app = QApplication(sys.argv)
@@ -29,10 +34,12 @@ class MonitoringApp:
         self.stacked = self.ui.stackedWidget
 
         # 컨트롤러 보관 (지연 생성)
+        self.page01 = None
         self.page02 = None  # BarcodeScannerApp
         self.page03 = None  # GuideTracking
         self.page04 = None  # CheckExitCamScreen
         self.page05 = None
+        self.pc2_bridge = None
 
         # ROS init 상태 추적 (page04 전용)
         self.ros_active = False
@@ -55,6 +62,34 @@ class MonitoringApp:
         # 윈도우 닫힐 때 정리
         self.ui.closeEvent = self._wrap_close_event(self.ui.closeEvent)
 
+
+        guide_dock_label = self.ui.findChild(QLabel, "guidebot_dock")
+        guide_batt_label = self.ui.findChild(QLabel, "guidebot_bat")
+
+        patrol_dock_label = self.ui.findChild(QLabel, "patrolbot_dock")
+        patrol_batt_label = self.ui.findChild(QLabel, "patrolbot_bat")
+        self.page01 = Page01InitScreen()
+
+        self.page01.set_ui(
+                    guide_dock_label=guide_dock_label,
+                    guide_battery_label=guide_batt_label,
+                    patrol_dock_label=patrol_dock_label,
+                    patrol_battery_label=patrol_batt_label,
+                    guide_topic_dock="/robot8/dock_status",
+                    guide_topic_batt="/robot8/battery_state",
+                    patrol_topic_dock="/robot9/dock_status",
+                    patrol_topic_batt="/robot9/battery_state",
+                    dock_type="dock_status")
+        self.page01.start()
+        # on_page_changed 첫머리의 정리들 뒤 혹은 __init__ 마지막에
+        if self.pc2_bridge is None:
+            self.pc2_bridge = Pc2Bridge(
+                topic_art="/pc2/artwork_state",   # PC2 발행 토픽 이름 합의
+                srv_gift="/pc2/gift_counts"       # 서비스 이름 합의
+            )
+            self.pc2_bridge.start()
+
+
     # ————————————————————————
     # 페이지 엔트리/엑싯 공통 처리
     # ————————————————————————
@@ -63,9 +98,12 @@ class MonitoringApp:
         self.stop_page02()
         self.stop_page03()
         self.stop_page04()
+        self.stop_page01()
 
         # 진입한 페이지 시작
         current_widget = self.stacked.currentWidget()
+        if current_widget is self.ui.page01_start:
+            self.start_page01()
         if current_widget is self.ui.page02_barcode:
             self.start_page02()
         elif current_widget is self.ui.page03_description:
@@ -81,6 +119,14 @@ class MonitoringApp:
             self.ensure_ros_stopped()
             self.start_page05()
 
+
+    def start_page01(self):
+        if self.page01:
+            self.page01.start()
+
+    def stop_page01(self):
+        if self.page01:
+            self.page01.close_app()
 
     # ————————————————————————
     # page02: 바코드
@@ -120,6 +166,9 @@ class MonitoringApp:
         # DB insert
         self.current_visit_id = insert_visit(date_str, int(planned_count), gift_str)
         print("[monitoring] DB insert visit_id:", self.current_visit_id)
+
+        if self.pc2_bridge:
+            self.pc2_bridge.current_visit_id = self.current_visit_id
 
         # 예상 인원 퍼블리시
         if self.count_bridge:
@@ -224,6 +273,11 @@ class MonitoringApp:
     # ————————————————————————
     def _wrap_close_event(self, orig_handler):
         def handler(event):
+            try:
+                if self.pc2_bridge:
+                    self.pc2_bridge.stop()
+            except Exception:
+                pass
             # 페이지별 종료 정리
             self.stop_page02()
             self.stop_page03()

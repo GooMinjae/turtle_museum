@@ -43,7 +43,7 @@ class BarcodeScannerWorker(QObject):
                 self.errorOccurred.emit("카메라를 열 수 없습니다.")
                 break
 
-            frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+            # frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
             
             processed_frame, barcode_info, detected = self.recognize_barcode(frame)
             self.frameCaptured.emit(processed_frame)
