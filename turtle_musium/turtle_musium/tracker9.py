@@ -25,32 +25,32 @@ class tracker_node(Node):
         self.create_subscription(PointStamped,'/robot9/point_camera',self.callback_depth,10)
 
         self.pub_stay = self.create_publisher(Bool,'/robot9/gift_stay',10)
-        self.sub_gift_start = self.create_subscription(Bool,'/robot9/giftshop',self.callback_giftshop,10)
-
+        # self.sub_gift_start = self.create_subscription(Bool,'/robot9/giftshop',self.callback_giftshop,10)
+        self.sub_label = self.create_subscription(String,"robot9/painting",self.callback_label,10)
         self.latest_map_point = None
         self.goal_handle = None
         self.block_goal_updates = True
         self.close_distance_hit_count = 0
         self.last_feedback_log_time = 0
         self.pose = PoseStamped()
+        self.gift_put = False
 
 
         # self.create_timer(0.5, self.process_frame)
 
 
+    def callback_label(self,msg: String):
+        self.label = msg.data
 
-    def callback_giftshop(self,msg: Bool):
-        self.gift_put = msg.data
             
     def callback_depth(self,pt):
 
             try:
-
-                pt.point.z = pt.point.z - 0.3
-
-
-
-
+                if self.label in ("pingu","moo","haowl","pinga"):
+                    pt.point.z = pt.point.z - 0.5
+                self.get_logger().info(f"Detected at map: (x = {pt.point.x:.2f}, y = {pt.point.y:.2f} z = {pt.point.z:.2f})")
+                if pt.point.z <= 0.0:
+                    pt.point.z = 0.0
                 pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
                 self.latest_map_point = pt_map
 
@@ -59,7 +59,7 @@ class tracker_node(Node):
                     self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
                     
 
-                self.get_logger().info(f"Detected person at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f})")
+                self.get_logger().info(f"Detected at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f},{pt_map.point.y:.2f})")
 
                 if self.goal_handle:
                     self.get_logger().info("Canceling previous goal...")
@@ -68,7 +68,7 @@ class tracker_node(Node):
                 self.send_goal()
                 
 
-                # self.target_result = 'None'
+                self.target_result = 'None'
 
 
             except Exception as e:
@@ -88,7 +88,9 @@ class tracker_node(Node):
         self.pose.header.stamp = self.get_clock().now().to_msg()
         self.pose.pose.position.x = self.latest_map_point.point.x
         self.pose.pose.position.y = self.latest_map_point.point.y
-        self.pose.pose.orientation.w = 1.0
+        self.pose.pose.orientation.z = 180.0
+        # self.pose.pose.orientation.w = 1
+
         # pose.pose.position.x = -2.0
         # pose.pose.position.y = 1.0
 
