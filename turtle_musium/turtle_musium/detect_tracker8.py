@@ -1,5 +1,4 @@
 # --------- ROS/메시지/액션/TF 관련 import ---------
-from std_msgs.msg import Bool  # (옵션) 완료 신호 퍼블리시용
 from geometry_msgs.msg import PointStamped, PoseStamped, PoseWithCovarianceStamped, Twist  # 포인트/포즈 메시지
 from nav2_msgs.action import NavigateToPose  # Nav2의 내비게이션 액션 정의
 from rclpy.action import ActionClient  # ROS2 액션 클라이언트
@@ -10,13 +9,31 @@ from std_msgs.msg import String
 from rclpy.time import Time
 from transforms3d.euler import euler2quat
 
+#------------------------------YOLO-----------------
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+
+from sensor_msgs.msg import Image, CameraInfo, CompressedImage
+from std_msgs.msg import String, Bool
+
+from cv_bridge import CvBridge
+from ultralytics import YOLO
+
+import numpy as np
+import cv2
+import time
+import threading
+from collections import namedtuple
+from message_filters import Subscriber, ApproximateTimeSynchronizer
+
+Pair = namedtuple("Pair", "rgb depth stamp frame_id")
+
 import tf2_geometry_msgs  # PointStamped 등 TF 변환 타입 지원을 위한 임포트(실사용은 없지만 등록 용도)
 # --------- ROS2 유틸/시간/수학/외부프로세스 ---------
 import rclpy  # ROS2 파이썬 클라이언트 라이브러리
 from rclpy.duration import Duration  # TF 변환 타임아웃 등에 사용
-import time  # 디바운스 및 로그 주기 제어
 import math  # 거리 계산(hypot) 등에 사용
-import threading
+
 
 class TrackerPersonNode(Node):
     """
@@ -27,7 +44,7 @@ class TrackerPersonNode(Node):
     - /robot8/amcl_pose 로봇 위치가 특정 존에 진입하면: goal 취소 + TTS + wait_sec 후 자동 재개
     """
     def __init__(self):
-        super().__init__('tracker_person_node')  # 노드 이름 설정
+        super().__init__('detect_tracker_node')  # 노드 이름 설정
 
         # ---------- 파라미터 선언(기본값 포함) ----------
         self.declare_parameter('close_enough_distance', 0.1)  # 근접 판정 임계값(m)
@@ -50,6 +67,31 @@ class TrackerPersonNode(Node):
              , 'wait_sec': 0},
         ]
         # ---------- 파라미터 실제 값 가져오기 ----------
+        # === Internal state ===
+        self.bridge = CvBridge()
+        self.K = None
+        self.rgb_image = None
+        self.depth_image = None
+        self.camera_frame = None
+        self.shutdown_requested = False
+        self.logged_intrinsics = False
+        self.inference_active = False
+        self.target_id = None
+        self.lost_count = 0
+        self.MAX_LOST = 10  # 타겟 분실 후 재획득까지 허용 프레임 수
+
+        self._pair_lock = threading.Lock()
+        self._latest_pair = None
+        self.infer_lock = threading.Lock()
+        self.last_processed_stamp = None
+
+        # === Load YOLO model ===
+        self.model = YOLO(
+            "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/only_people_8n_batch32.pt"
+        )
+        self.model.to('cuda')
+        self.get_logger().info("YOLOv8 model loaded.")
+
         # zones는 파라미터가 아니므로 get_parameter()로 가져오지 않습니다.
         self._last_tf_warn_ns = 0
         self.rotating = False
@@ -69,22 +111,36 @@ class TrackerPersonNode(Node):
         # ---------- NavigateToPose 액션 클라이언트 ----------
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
 
-        # ---------- 구독자/퍼블리셔 ----------
-        self.create_subscription(Bool, '/exit/people_detected', self.cb_people_detected, 10)
-        self.create_subscription(PointStamped, '/robot8/point_camera', self.cb_point_from_camera, 10)  # 사람 포인트 입력
+
+        # === Publishers ===
+        self.person_pub = self.create_publisher(Image, '/robot8/frame', 10)
+        # === Subscriptions ===
+        qos_profile = QoSProfile(
+            history=QoSHistoryPolicy.KEEP_LAST,  # 최신 depth 개수만 유지
+            depth=2,                            # 큐 크기 (10개 유지)
+            reliability=QoSReliabilityPolicy.BEST_EFFORT
+        )
+
+        self.create_subscription(Bool, '/robot8/people', self.people_check_cb, 10)
+        self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
+
+        self.rgb_sub = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed', qos_profile=qos_profile)
+        self.depth_sub = Subscriber(self, Image, '/robot8/oakd/stereo/image_raw', qos_profile=qos_profile)
+        self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.4)
+        self.ts.registerCallback(self.synced_rgb_depth_cb)
+
+        # ---------- 구독자/퍼블리셔 ----------  #
         self.create_subscription(PoseWithCovarianceStamped, '/robot8/amcl_pose', self.cb_amcl, 10)  # 로봇 현재 위치(존 체크용)
         self.pub_done = self.create_publisher(Bool, '/robot8/is_done_track', 10)  # (옵션) 완료 신호, 필요 없으면 제거 가능
         self.pub_zone_event = self.create_publisher(String, '/robot8/now_loc', 10)
         self.pub_ready_to_track1 = self.create_publisher(Bool, '/robot8/end_track1', 10)
         self.pub_ready_to_track3 = self.create_publisher(Bool, '/robot8/end_track3', 10)
 
-
         # ---------- 런타임 상태 변수 ----------
-        self.people_exit = False
         self.latest_map_point = None          # 최근 변환된 사람 위치(map 좌표)
         self.goal_handle = None               # 현재 진행 중인 액션 goal 핸들
 
-        self.block_goal_updates = True       # 근접 래치/존 일시정지 중에는 True로 목표 갱신 차단
+        self.block_goal_updates = False       # 근접 래치/존 일시정지 중에는 True로 목표 갱신 차단
         self.close_distance_hit_count = 0     # 근접 판정 연속 횟수 카운터
         self.last_feedback_log_time = 0.0     # 남은거리 로그 간격 제어
         self.last_goal_send_time = 0.0        # 목표 갱신 시간 디바운스
@@ -99,8 +155,176 @@ class TrackerPersonNode(Node):
 
         # ---------- 존 체크 타이머 ----------
         # 주기적으로 현재 위치가 어느 존에 들어왔는지 감시
-        self.create_timer(1.0 / max(1.0, self.zone_check_hz), self.zone_check_tick)
-        self.get_logger().info('tracker_person_node started.')  # 시작 로그
+        # self.create_timer(1.0 / max(1.0, self.zone_check_hz), self.zone_check_tick)
+        # self.get_logger().info('tracker_person_node started.')  # 시작 로그
+
+        # === Threads ===
+        self.infer_thread1 = threading.Thread(target=self.zone_check_tick, daemon=True)
+        self.infer_thread2 = threading.Thread(target=self.run_inference_thread, daemon=True)
+        self.infer_thread1.start()
+        self.infer_thread2.start()
+
+    # ---------------------------
+    # Callbacks & processing
+    # ---------------------------
+    def people_check_cb(self, msg: Bool):
+        if msg.data:
+            self.get_logger().info("People check True -> start inference")
+            self.inference_active = True
+        else:
+            self.inference_active = False
+
+    def camera_info_callback(self, msg):
+        self.K = np.array(msg.k).reshape(3, 3)
+        if not self.logged_intrinsics:
+            self.get_logger().info("Camera intrinsics received")
+            self.logged_intrinsics = True
+
+    def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: Image):
+        try:
+            # Decode RGB
+            np_arr = np.frombuffer(rgb_msg.data, np.uint8)
+            rgb = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            # Decode depth
+            depth_raw = self.bridge.imgmsg_to_cv2(depth_msg, "passthrough")
+            if depth_msg.encoding == "16UC1":
+                depth_raw = depth_raw.astype(np.float32) / 1000.0  # mm -> m
+            elif depth_msg.encoding == "32FC1":
+                pass
+            else:
+                raise ValueError(f"Unexpected encoding: {depth_msg.encoding}")
+
+            # Crop depth to align with RGB FOV
+            h, w = depth_raw.shape
+            crop_x = int(0.26 * w / 2) * 2
+            crop_y = int(0.18 * h / 2) * 2
+            depth_crop = depth_raw[crop_y:h - crop_y, crop_x:w - crop_x]
+            depth_aligned = cv2.resize(depth_crop, (w, h), cv2.INTER_NEAREST)
+
+            with self._pair_lock:
+                self._latest_pair = Pair(
+                    rgb=rgb,
+                    depth=depth_aligned,
+                    stamp=rgb_msg.header.stamp,
+                    frame_id=rgb_msg.header.frame_id or "oakd_rgb_frame"
+                )
+
+        except Exception as e:
+            self.get_logger().error(f"Sync decode failed: {e}")
+
+    # ---------------------------
+    # Inference loop
+    # ---------------------------
+    def run_inference_thread(self):
+        while not self.shutdown_requested:
+            self.process_frame()
+            time.sleep(0.2)
+
+    def process_frame(self):
+        if not self.inference_active:
+            return
+        if self.K is None:
+            return
+        if not self.infer_lock.acquire(blocking=False):
+            return
+
+        try:
+            with self._pair_lock:
+                if self._latest_pair is None:
+                    return
+                pair = self._latest_pair
+
+            rgb = pair.rgb.copy()
+            depth = pair.depth.copy()
+
+            # ★ 변경: predict -> track (ID 사용)
+            results = self.model.track(
+                rgb, conf=0.7, verbose=False, persist=True, tracker='bytetrack.yaml'
+            )[0]
+
+            frame = rgb.copy()
+            any_main = False
+            H, W = depth.shape[:2]
+
+            persons = []  # (track_id, conf, (x1,y1,x2,y2), (cx,cy))
+
+            for det in results.boxes:
+                cls = int(det.cls[0])
+                label = self.model.names[cls].lower()
+                conf = float(det.conf[0])
+                x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
+
+                # 시각화 (원래 코드 유지)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(frame, f"{label} {conf:.2f}", (x1, max(0, y1-5)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+                # ★ 변경: person만 추적 candidate로 수집 (ID 포함)
+                if label == "person":
+                    # det.id가 None일 수 있어 안전 처리
+                    tid = int(det.id[0]) if getattr(det, 'id', None) is not None else -1
+                    cx = (x1 + x2) // 2
+                    cy = (y1 + y2) // 2
+                    persons.append((tid, conf, (x1, y1, x2, y2), (cx, cy)))
+
+            # ★ 변경: 타겟 ID가 없으면(초기) conf가 가장 높은 사람으로 설정
+            if self.target_id is None:
+                if persons:
+                    best = max(persons, key=lambda p: p[1])  # conf 최대
+                    self.target_id = best[0] if best[0] != -1 else None
+                    self.lost_count = 0
+
+            # ★ 변경: 현재 타겟 ID와 매칭되는 detection 찾기
+            target_det = None
+            if self.target_id is not None:
+                for tid, conf, bbox, center in persons:
+                    if tid == self.target_id:
+                        target_det = (tid, conf, bbox, center)
+                        break
+
+            # ★ 변경: 타겟이 보이면 그 사람만 퍼블리시, 아니면 분실 카운트 증가
+            if target_det is not None:
+                self.lost_count = 0
+                _, _, (x1, y1, x2, y2), (u, v) = target_det
+
+                # 표시용 점
+                cv2.circle(frame, (u, v), 4, (0, 255, 0), -1)
+
+                # 3D 계산 및 퍼블리시 (원래 코드 유지)
+                if 0 <= u < W and 0 <= v < H:
+                    z = float(depth[v, u])
+                    if z > 0.0 and not np.isnan(z):
+                        fx, fy = self.K[0, 0], self.K[1, 1]
+                        cx0, cy0 = self.K[0, 2], self.K[1, 2]
+                        X = (u - cx0) * z / fx
+                        Y = (v - cy0) * z / fy
+
+                        self.pt = PointStamped()
+                        self.pt.header.frame_id = pair.frame_id
+                        self.pt.header.stamp = pair.stamp
+                        self.pt.point.x, self.pt.point.y, self.pt.point.z = X, Y, z
+            else:
+                # 타겟 분실
+                self.lost_count += 1
+                if self.lost_count > self.MAX_LOST:
+                    # 너무 오래 못 보면 다시 “conf 최고”로 재획득
+                    if persons:
+                        best = max(persons, key=lambda p: p[1])
+                        self.target_id = best[0] if best[0] != -1 else None
+                        self.lost_count = 0
+                    else:
+                        self.target_id = None  # 화면에 아무도 없음
+
+            if not any_main:
+                self.main_pub.publish(String(data="none"))
+
+            self.display_frame = frame
+            self.person_pub.publish(Image(data=frame))
+            self.last_processed_stamp = pair.stamp
+
+        finally:
+            self.infer_lock.release()
 
     def publish_multiple(self, pub, msg, repeat: int = 5, interval: float = 0.2):
         """
@@ -121,13 +345,10 @@ class TrackerPersonNode(Node):
     def cb_amcl(self, msg: PoseWithCovarianceStamped):
         self.robot_xy = (msg.pose.pose.position.x, msg.pose.pose.position.y)  # 로봇의 현재 (x,y) 저장
 
-    def cb_people_detected(self, msg: Bool):
-        self.people_exit = msg.data
-
     # ===================== 콜백: 카메라 포인트 수신 =====================
-    def cb_point_from_camera(self, pt: PointStamped):
+    def cb_point_from_camera(self):
         """카메라 좌표계에서 들어온 사람 포인트를 map으로 변환하고 goal을 전송(디바운스 적용)."""
-        if self.paused_for_zone or self.block_goal_updates or self.people_exit:
+        if self.paused_for_zone or self.block_goal_updates:
             return  # 존 설명 중이거나 근접 래치면 목표 갱신 중단
         
             # ----- 회전 중이면 멈춤 -----
@@ -138,17 +359,17 @@ class TrackerPersonNode(Node):
             self.pub_cmd_vel.publish(twist)  # <<< ADD
 
         # ----- 마지막 포인트 저장 (회전 방향 결정용) ----- 
-        self.last_camera_point = pt  # <<< ADD
+        self.last_camera_point = self.pt  # <<< ADD
 
         # 사람에게 너무 가까이 붙지 않도록 목표 z 조정
-        if pt.point.z > self.approach_offset:
-            pt.point.z = pt.point.z - self.approach_offset
+        if self.pt.point.z > self.approach_offset:
+            self.pt.point.z = self.pt.point.z - self.approach_offset
         else:
-            pt.point.z = self.approach_offset
+            self.pt.point.z = self.approach_offset
 
 
         try:
-            pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=1.5))
+            pt_map = self.tf_buffer.transform(self.pt, 'map', timeout=rclpy.duration.Duration(seconds=1.5))
             self.latest_map_point = pt_map
             xy = (pt_map.point.x, pt_map.point.y)
         except Exception as e:
@@ -329,8 +550,8 @@ class TrackerPersonNode(Node):
         tts.say(text)
 
         # ---- 즉시 추적 재개 ----
-        # self.block_goal_updates = False
-        # self.close_distance_hit_count = 0
+        self.block_goal_updates = False
+        self.close_distance_hit_count = 0
 
         msg = String()
         msg.data = "None"
@@ -368,8 +589,11 @@ class TrackerPersonNode(Node):
 def main(args=None):
     rclpy.init(args=args)         # ROS2 초기화
     node = TrackerPersonNode()    # 노드 인스턴스 생성
+    executor = MultiThreadedExecutor(num_threads=3)
+    executor.add_node(node)
     try:
         rclpy.spin(node)          # 콜백/타이머를 돌리며 대기
+        executor.spin()
     except KeyboardInterrupt:
         pass                      # Ctrl+C 등으로 종료
     finally:

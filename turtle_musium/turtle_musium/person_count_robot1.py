@@ -39,6 +39,7 @@ class Turtlebot4GuideCounter(Node):
         self.declare_parameter('goal_dir', 'EAST')
         self.declare_parameter('timeout_sec', 180.0)
         # Load params
+        self.people_exit = False
         self.input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
         self.conf = float(self.get_parameter('conf').value)
         self.match_threshold = int(self.get_parameter('match_threshold').value)
@@ -51,6 +52,7 @@ class Turtlebot4GuideCounter(Node):
         self.targets = [
             (-0.283, 1.12, "WEST"),   # 첫 번째 목표 (지금 쓰는 것)
             (-0.0671, -0.367, "SOUTH"),     # 두 번째 목표
+            (0, 0, "NORTH") # home
         ]
         self.current_target_idx = 0
 
@@ -76,14 +78,16 @@ class Turtlebot4GuideCounter(Node):
             except Exception as e:
                 self.get_logger().warn(f'YOLO load failed, switching to bypass: {e}')
                 self.bypass = True
-        # ===== IO =====
+        # ===== IO =====s
+        self.create_subscription(Bool, '/exit/people_detected', self.cb_people_detected, 10)
         self.create_subscription(
             CompressedImage, self.input_topic, self.image_cb, qos_profile_sensor_data
         )
         self.create_subscription(
             Int32, '/robot8/audience_count', self.audience_cb, 10
         )
-        self.pub_people_check = self.create_publisher(Bool, '/robot8/people_check', 10)
+        self.pub_people_check = self.create_publisher(Int32, '/robot8/people_check', 10)
+        self.pub_people = self.create_publisher(Bool, '/robot8/people', 10)
         self.pub_arrived = self.create_publisher(Bool, '/robot8/arrived', 10)
         # ===== Timer for inference =====
         self.create_timer(0.1, self.infer_tick)  # 10Hz
@@ -91,25 +95,11 @@ class Turtlebot4GuideCounter(Node):
             f'Started. state={self.state}, match_threshold={self.match_threshold}, '
             f'conf={self.conf}, bypass_inference={self.bypass}'
         )
-        # ===== Service =====
-        self.create_service(Trigger, '/robot8/start_action', self.handle_start_action)
-        self._action_requested = False
 
-    # ---------- Service Callback ----------
-    def handle_start_action(self, request, response):
-        """
-        로봇 제어 노드에서 서비스 요청 시 호출.
-        True라면 현재 상태가 LATCHED이면 바로 실행 가능.
-        """
-        if self.latched:
-            response.success = True
-            response.message = "Action started."
-            # 여기서 실행할 행동을 넣거나 상태 전이 가능
-        else:
-            response.success = False
-            response.message = "People check not True yet."
-        return response
     # ---------- Callbacks ----------
+    def cb_people_detected(self, msg: Bool):
+        self.people_exit = msg.data
+
     def image_cb(self, msg: CompressedImage):
         try:
             np_arr = np.frombuffer(msg.data, np.uint8)
@@ -126,7 +116,7 @@ class Turtlebot4GuideCounter(Node):
             self.consec_match = 0
             if self.latched:
                 self.latched = False
-                self.pub_people_check.publish(Bool(data=False))
+                self.pub_people_check.publish(Int32(self.audience_count))
             # 상태 전이: WAIT/LATCHED에서 관객수>0이면 NAV 시작
             if val > 0 and not self._nav_busy and self.state in (self.STATE_WAIT, self.STATE_LATCHED):
                 self._transition_to(self.STATE_NAV)
@@ -139,7 +129,7 @@ class Turtlebot4GuideCounter(Node):
             return
 
         # 마지막 목표인지 확인
-        if self.current_target_idx == len(self.targets) - 1:
+        if self.current_target_idx == len(self.targets) - 2:
             # 마지막이면 INFERENCING 안 하고 종료 처리
             self.get_logger().info("마지막 목표 도착! 추론 건너뜀.")
             self._transition_to(self.STATE_LATCHED)
@@ -184,6 +174,9 @@ class Turtlebot4GuideCounter(Node):
             self.pub_arrived.publish(Bool(data=arrived))
             if arrived:
                 self.get_logger().info("Arrived at goal, switching to INFERENCING")
+                if self.current_target_idx == len(self.targets) - 2:
+                    self.pub_people.publish(Bool(data=True))
+
                 self._transition_to(self.STATE_INF)
             else:
                 self._transition_to(self.STATE_WAIT)
@@ -198,9 +191,17 @@ class Turtlebot4GuideCounter(Node):
             return
         if self.rgb_image is None:
             return
+        
+        if self.people_exit:
+            self.get_logger().warn("People exit detected during inference → Returning home.")
+            self.current_target_idx = len(self.targets) - 1  # home 인덱스로 이동
+            self._transition_to(self.STATE_NAV)
+            self._start_navigation_thread()
+            self.people_exit = False  # 한번만 실행되도록 reset
+            return
 
         # 마지막 목표 지점이라면 추론 건너뜀
-        if self.current_target_idx == len(self.targets) - 1:
+        if self.current_target_idx == len(self.targets) - 2:
             self._transition_to(self.STATE_LATCHED)
             return
 
@@ -217,7 +218,8 @@ class Turtlebot4GuideCounter(Node):
                 self.consec_match = 0
 
             if self.consec_match >= self.match_threshold:
-                self.pub_people_check.publish(Bool(data=True))
+                self.pub_people_check.publish(Int32(data=self.audience_count))
+                # self.pub_people.publish(Bool(data=True))
                 self.latched = True
                 self._transition_to(self.STATE_LATCHED)
                 self.get_logger().info(f'people_check -> True (matched {self.consec_match} frames). Latched.')

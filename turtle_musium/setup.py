@@ -26,8 +26,7 @@ setup(
             'robot9_main=turtle_musium.robot9_move:main',
             'tracker9=turtle_musium.tracker9:main',
             'detect9=turtle_musium.detect_publisher9:main',
-
-
+            'person=turtle_musium.person_count_robot1:main',
         ],
     },
 )
