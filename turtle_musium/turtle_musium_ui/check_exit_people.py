@@ -7,6 +7,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 from std_msgs.msg import Bool
 
+import time
+
 MODEL_PATH  = "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/exit_people.pt"
 CONF_THRES  = 0.8
 CAM_IDX     = 0
@@ -66,7 +68,9 @@ class ExitPeopleWorker(Node):
             self.sig.frameCaptured.emit(processed_frame)
 
             if detected:
-                self.publish_bool(True)
+                for _ in range(30):
+                    self.publish_bool(True)
+                    time.sleep(0.1)
                 self.sig.detected.emit(True)
                 if self.stop_on_detect:
                     self.running = False

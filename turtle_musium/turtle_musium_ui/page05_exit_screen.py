@@ -1,10 +1,18 @@
 # page05_exit_screen.py
-from PyQt5.QtWidgets import QWidget, QLabel, QApplication
-from PyQt5.QtCore import Qt
-from PyQt5.uic import loadUi
+from io import BytesIO
 import sys
 
-from data_base.visit_db import get_visit_by_id
+from PyQt5.QtWidgets import QWidget, QLabel, QApplication
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.uic import loadUi
+
+import matplotlib
+matplotlib.use("Agg")  # 창 안 띄우고 메모리 렌더
+import matplotlib.pyplot as plt
+
+
+from data_base.visit_db import get_visit_by_id, get_daily_counts 
 
 # # ---- DB 접근: 안전 임포트 (패키지/로컬 둘 다 시도) ----
 # try:
@@ -76,6 +84,63 @@ class ExitSummaryScreen(QWidget):
         if self.info_label:
             self.info_label.setText("<br>".join(html))
             self.info_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+    def attach_chart_button(self, btn):
+        """외부에서 chart_btn을 주입해서 클릭 시 차트를 그리도록 연결"""
+        if btn is not None:
+            btn.clicked.connect(self.toggle_view)
+
+    # ★ 토글 동작
+    def toggle_view(self):
+        if self._mode == "summary":
+            self.show_daily_counts_chart()
+            self._mode = "chart"
+        else:
+            # 요약으로 복귀
+            self.refresh()  # 현재 visit_id 기준으로 요약 다시 그림
+            self._mode = "summary"
+
+    def show_daily_counts_chart(self):
+        """날짜별 인원수(예정 vs 실집계) 막대 차트를 그리고 info_label에 표시"""
+        try:
+            data = get_daily_counts() or []
+            if not data:
+                if self.info_label:
+                    self.info_label.setText("표시할 데이터가 없습니다.")
+                return
+
+            dates    = [d["date"] for d in data]
+            planned  = [int(d["planned"] or 0) for d in data]
+            counted  = [int(d["counted"] or 0) for d in data]
+
+            # ── 차트 그리기 ──
+            plt.figure(figsize=(6, 3), dpi=150)
+            x = range(len(dates))
+            width = 0.4
+            plt.bar([i - width/2 for i in x], planned, width=width, label="예정")
+            plt.bar([i + width/2 for i in x], counted, width=width, label="실집계")
+            plt.xticks(list(x), dates, rotation=45, ha="right")
+            plt.title("날짜별 인원수(예정 vs 실집계)")
+            plt.xlabel("날짜")
+            plt.ylabel("인원")
+            plt.legend()
+            plt.tight_layout()
+
+            # ── QLabel로 넣기 ──
+            buf = BytesIO()
+            plt.savefig(buf, format="png")
+            plt.close()
+            buf.seek(0)
+            img = QImage.fromData(buf.getvalue(), "PNG")
+            pix = QPixmap.fromImage(img)
+
+            if self.info_label:
+                # info_label이 텍스트 보여주던 라벨이라도 Pixmap 넣으면 차트로 바뀜
+                self.info_label.setPixmap(pix)
+                self.info_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        except Exception as e:
+            if self.info_label:
+                self.info_label.setText(f"차트 표시 중 오류: {e}")
 
     def refresh(self):
         if self._current_visit_id is not None:

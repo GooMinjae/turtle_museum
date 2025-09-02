@@ -7,7 +7,7 @@ from PyQt5.QtCore import QObject, pyqtSignal, Qt
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from rclpy.executors import SingleThreadedExecutor
 
-from std_msgs.msg import String, Bool, Int32MultiArray
+from std_msgs.msg import String, Bool
 from irobot_create_msgs.msg import DockStatus
 from sensor_msgs.msg import BatteryState
 
@@ -26,23 +26,25 @@ class _InitStatusNode(Node):
                  dock_type: str = "string", context: Context = None):
         super().__init__('init_status_node', context=context)
         self.bridge = bridge
-        qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
+        qos_guide = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
                          history=HistoryPolicy.KEEP_LAST, depth=10)
 
+        qos_pat = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                         history=HistoryPolicy.KEEP_LAST, depth=10)
 
         # Dock
-        self.create_subscription(DockStatus, guide_topic_dock, self._on_guide_dock_status, qos)
+        self.create_subscription(DockStatus, guide_topic_dock, self._on_guide_dock_status, qos_guide)
 
-        self.create_subscription(DockStatus, patrol_topic_dock, self._on_patrol_dock_status, qos)
+        self.create_subscription(DockStatus, patrol_topic_dock, self._on_patrol_dock_status, qos_pat)
 
         # Battery state
         self.sub_guide_batt = self.create_subscription(
-            BatteryState, guide_topic_batt, self._on_guide_batt, 10
+            BatteryState, guide_topic_batt, self._on_guide_batt, qos_guide
         )
 
         # Battery state
         self.sub_parol_batt = self.create_subscription(
-            BatteryState, patrol_topic_batt, self._on_patrol_batt, 10
+            BatteryState, patrol_topic_batt, self._on_patrol_batt, qos_pat
         )
 
     def _on_guide_dock_status(self, msg: DockStatus):
@@ -106,9 +108,9 @@ class Page01InitScreen:
         self.dock_type = DockStatus()  # "string" 또는 "bool"
 
     def set_ui(self, *, guide_dock_label, guide_battery_label, patrol_dock_label, patrol_battery_label,
-               guide_topic_dock="/robot8/dock_status", guide_topic_batt="/robot8/battery_state",
-               patrol_topic_dock="/robot9/dock_status", patrol_topic_batt="/robot9/battery_state",
-               dock_type="string"):
+                guide_topic_dock="/robot8/dock_status", guide_topic_batt="/robot8/battery_state",
+                patrol_topic_dock="/robot9/dock_status", patrol_topic_batt="/robot9/battery_state",
+                dock_type="string"):
         self._guide_dock_label = guide_dock_label
         self._guide_batt_label = guide_battery_label
         self.guide_topic_dock = guide_topic_dock

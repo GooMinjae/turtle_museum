@@ -49,16 +49,16 @@ class BarcodeGenerator:
 # 외부에서 호출 예시
 DUMMY = [
     {
-        "count_people": "2",
-        "gift_data": "1100",
+        "count_people": "3",
+        "gift_data": "2211",
     },
     {
         "count_people": "3",
-        "gift_data": "1200",
+        "gift_data": "0110",
     }
 ]
 if __name__ == "__main__":
-    dummy_idx = 0
+    dummy_idx = 1
     barcode_generator = BarcodeGenerator(
         count_people=DUMMY[dummy_idx]["count_people"], 
         gift_data=DUMMY[dummy_idx]["gift_data"],

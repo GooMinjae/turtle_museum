@@ -1,5 +1,5 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QLabel
+from PyQt5.QtWidgets import QApplication, QLabel, QPushButton
 from PyQt5.uic import loadUi
 
 # 각 페이지 컨트롤러
@@ -12,11 +12,6 @@ from turtle_musium_ui.page05_exit_screen import ExitSummaryScreen
 from data_base.visit_db import insert_visit, update_counted_count
 from turtle_musium_ui.share_db_bridge import Pc2Bridge
 
-# from page02_barcode_scanner_screen import BarcodeScannerApp
-# from page03_description_art_screen import GuideTracking
-# from page04_check_exit_people_screen import CheckExitCamScreen
-# from count_bridge import CountBridge
-# from visit_db import insert_visit, update_counted_count
 
 import rclpy
 
@@ -47,6 +42,7 @@ class MonitoringApp:
         # 카운트 브릿지 & 현재 방문 rowid
         self.count_bridge = None
         self.current_visit_id = None
+        self._auto_switched_to_page02 = False
 
         # 페이지 변경 시그널 연결
         self.stacked.currentChanged.connect(self.on_page_changed)
@@ -54,6 +50,7 @@ class MonitoringApp:
         # 시작 페이지 지정 (원하는 페이지로 바꿔도 됨)
         self.stacked.setCurrentWidget(self.ui.page01_start)
         self.ui.open_btn.clicked.connect(lambda: self.stacked.setCurrentWidget(self.ui.page02_barcode))
+        self.ui.close_btn.clicked.connect(lambda: self.stacked.setCurrentWidget(self.ui.page01_start))
         # 여기서는 UI가 기본으로 띄우는 페이지를 그대로 사용
 
         # 초기 진입 처리
@@ -63,6 +60,10 @@ class MonitoringApp:
         self.ui.closeEvent = self._wrap_close_event(self.ui.closeEvent)
 
 
+        self._back_buttons = self.ui.findChildren(QPushButton, "back_btn")
+        for btn in self._back_buttons:
+            btn.clicked.connect(self._on_back_clicked)
+
         guide_dock_label = self.ui.findChild(QLabel, "guidebot_dock")
         guide_batt_label = self.ui.findChild(QLabel, "guidebot_bat")
 
@@ -71,24 +72,32 @@ class MonitoringApp:
         self.page01 = Page01InitScreen()
 
         self.page01.set_ui(
-                    guide_dock_label=guide_dock_label,
-                    guide_battery_label=guide_batt_label,
-                    patrol_dock_label=patrol_dock_label,
-                    patrol_battery_label=patrol_batt_label,
-                    guide_topic_dock="/robot8/dock_status",
-                    guide_topic_batt="/robot8/battery_state",
-                    patrol_topic_dock="/robot9/dock_status",
-                    patrol_topic_batt="/robot9/battery_state",
-                    dock_type="dock_status")
+            guide_dock_label=guide_dock_label,
+            guide_battery_label=guide_batt_label,
+            patrol_dock_label=patrol_dock_label,
+            patrol_battery_label=patrol_batt_label,
+            guide_topic_dock="/robot8/dock_status",
+            guide_topic_batt="/robot8/battery_state",
+            patrol_topic_dock="/robot9/dock_status",
+            patrol_topic_batt="/robot9/battery_state",
+            dock_type="dock_status"
+        )
         self.page01.start()
         # on_page_changed 첫머리의 정리들 뒤 혹은 __init__ 마지막에
         if self.pc2_bridge is None:
             self.pc2_bridge = Pc2Bridge(
-                topic_art="/pc2/artwork_state",   # PC2 발행 토픽 이름 합의
-                srv_gift="/pc2/gift_counts"       # 서비스 이름 합의
+                topic_art="/robot9/gallery_state",   # PC2 발행 토픽 이름 합의
+                srv_gift="/robot9/gift_data"       # 서비스 이름 합의
             )
+            self.pc2_bridge.artworkEvent.connect(self._on_pc2_artwork_event)
             self.pc2_bridge.start()
 
+
+
+    def _on_back_clicked(self):
+        idx = self.stacked.currentIndex()
+        if idx > 0:
+            self.stacked.setCurrentIndex(idx - 1)  # 이전 페이지로
 
     # ————————————————————————
     # 페이지 엔트리/엑싯 공통 처리
@@ -112,12 +121,37 @@ class MonitoringApp:
             self.start_page03()
         elif current_widget is self.ui.page04_exit_webcam:
             # page04는 rclpy 필요
-            self.ensure_ros_started()
+            # self.ensure_ros_started()
             self.start_page04()
         elif current_widget is self.ui.page05_final:
             # page05는 ROS 불필요
             self.ensure_ros_stopped()
             self.start_page05()
+
+    def _on_pc2_artwork_event(self, payload: dict):
+        """
+        PC2의 작품 토픽(Int32MultiArray → payload 변환)을 받으면
+        page01에서 page02로 자동 전환하고 로그를 출력한다.
+        payload 예시: {"piece_id": "gallery_A", "present": True/False, "state": "arrived"/"missing", "ts": "..."}
+        """
+        # 로그 찍기
+        try:
+            piece_id = payload.get("piece_id")
+            state    = payload.get("state")
+            ts       = payload.get("ts")
+            print(f"[monitoring] 작품 토픽 감지: {piece_id} -> {state} @ {ts}")
+        except Exception:
+            print(f"[monitoring] 작품 토픽 감지(원시): {payload}")
+
+        # 이미 한번 전환했으면 무시
+        if self._auto_switched_to_page02:
+            return
+
+        # 현재 page01이라면 page02(바코드)로 전환
+        if self.stacked.currentWidget() is self.ui.page01_start:
+            self._auto_switched_to_page02 = True
+            self.stacked.setCurrentWidget(self.ui.page02_barcode)
+
 
 
     def start_page01(self):
@@ -264,6 +298,8 @@ class MonitoringApp:
             info_label  = self.ui.findChild(QLabel, "final_info_label")
             self.page05.set_ui(title_label=title_label, info_label=info_label)
 
+            chart_btn = self.ui.findChild(QPushButton, "chart_btn")
+            self.page05.attach_chart_button(chart_btn)
         # current_visit_id가 있으면 표시
         if self.current_visit_id is not None:
             self.page05.show_visit(self.current_visit_id)

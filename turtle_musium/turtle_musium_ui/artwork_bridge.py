@@ -1,12 +1,15 @@
-# artwork_bridge.py
-import json
+# artwork_bridge.py (fixed)
 import threading
 from PyQt5.QtCore import QObject, pyqtSignal
+
 import rclpy
 from rclpy.node import Node
+from rclpy.context import Context
+from rclpy.executors import SingleThreadedExecutor
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import String, Bool
 
-# 1) 작품 ID -> (이미지 경로, 설명) 매핑
+# 작품 데이터
 PIECE_DB = {
     "gallery_A": {
         "image": "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/images/piece1.png",
@@ -21,63 +24,97 @@ PIECE_DB = {
         "desc":  "마지막 작품은 화난 핑구입니다.\n이 작품은 2010년대 중반 'Noot Noot!'이라는 밈으로 더 유명한 작품입니다.",
     },
 }
+
 class ArtworkBridge(QObject):
-    showArtwork = pyqtSignal(str, str)  # image_path, description
+    showArtwork = pyqtSignal(str, str)  # (image_path, description)
     trackDone  = pyqtSignal(bool)
 
-    def __init__(self, topic_name="/robot8/now_loc", piece_db=None):
+    def __init__(self,
+                 topic_now="/robot8/now_loc",
+                 topic_done="/robot8/is_done_track",
+                 piece_db=None,
+                 use_best_effort=False):
         super().__init__()
-        self._topic = topic_name
+        self._topic_now  = topic_now
+        self._topic_done = topic_done
+        self._db = piece_db or PIECE_DB
+
         self._running = False
         self._thread = None
+        self._ctx = None
         self._node = None
-        self._db = piece_db or PIECE_DB
-        self.going_piece_idx = 2
+        self._executor = None
+
+        self.going_piece_idx = 2  # "이동 중" 표시용 카운터
+
+        # QoS 선택(필요 시 BEST_EFFORT로)
+        self._qos = QoSProfile(
+            reliability=(ReliabilityPolicy.BEST_EFFORT if use_best_effort else ReliabilityPolicy.RELIABLE),
+            history=HistoryPolicy.KEEP_LAST, depth=10
+        )
 
     def start(self):
-        if self._running: return
+        if self._running:
+            return
         self._running = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
-
     def _run(self):
-        rclpy.init(args=None)
-        self._node = Node("artwork_bridge")
+        # per-bridge context/executor
+        self._ctx = Context()
+        rclpy.init(context=self._ctx)
+        self._node = Node("artwork_bridge", context=self._ctx)
 
-        # 작품 표시 토픽
+        # --- 콜백 ---
         def _cb_show(msg: String):
             piece_id = msg.data.strip()
             entry = self._db.get(piece_id)
             if entry:
-                img = entry.get("image", "")
-                desc = entry.get("desc", "")
-                self.showArtwork.emit(img, desc)
-            elif piece_id=="None":
-                self.showArtwork.emit(f"작품 {self.going_piece_idx} 이동 중입니다.", f"잠시만 기다려 주세요…")
+                self.showArtwork.emit(entry.get("image", ""), entry.get("desc", ""))
+            elif piece_id == "None" or piece_id == "":
+                # ★ 이미지 경로는 빈 문자열로, 설명만 보냄(경로 자리에 문구 넣지 않기)
+                self.showArtwork.emit("", f"작품 {self.going_piece_idx} 이동 중입니다.\n잠시만 기다려 주세요…")
                 self.going_piece_idx += 1
-                pass
             else:
                 self.showArtwork.emit("", f"알 수 없는 작품 ID: {piece_id}")
 
-        self._node.create_subscription(String, self._topic, _cb_show, 10)
-
-        # 완료 토픽 구독: /robot8/is_done_track (Bool)
         def _cb_done(msg: Bool):
-            self.trackDone.emit(bool(msg.data))  # True면 다음 페이지로 넘어감
+            self.trackDone.emit(bool(msg.data))
 
-        self._node.create_subscription(Bool, "/robot8/is_done_track", _cb_done, 10)
+        # --- 구독 생성 (한 곳에서 모두 만든 뒤 한 번만 spin) ---
+        self._node.create_subscription(String, self._topic_now,  _cb_show, self._qos)
+        self._node.create_subscription(Bool,   self._topic_done, _cb_done, self._qos)
+
+        # 전용 executor로 spin
+        self._executor = SingleThreadedExecutor(context=self._ctx)
+        self._executor.add_node(self._node)
 
         try:
-            while self._running and rclpy.ok():
-                rclpy.spin_once(self._node, timeout_sec=0.1)
+            while self._running and rclpy.ok(context=self._ctx):
+                self._executor.spin_once(timeout_sec=0.1)
         finally:
-            if self._node:
+            try:
+                self._executor.remove_node(self._node)
+            except Exception:
+                pass
+            try:
                 self._node.destroy_node()
-            rclpy.shutdown()
-
+            except Exception:
+                pass
+            try:
+                self._executor.shutdown()
+            except Exception:
+                pass
+            try:
+                rclpy.shutdown(context=self._ctx)
+            except TypeError:
+                rclpy.shutdown()
 
     def stop(self):
+        if not self._running:
+            return
         self._running = False
         if self._thread:
-            self._thread.join()
+            self._thread.join(timeout=1.0)
+            self._thread = None

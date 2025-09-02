@@ -77,7 +77,7 @@ class CountBridge(QObject):
         self._node.get_logger().info(f"recv /tour/count/done: {msg.data}")  # 디버그
         self.countDone.emit(int(msg.data))
 
-    def publish_expected_count(self, n: int, repeat: int = 80, delay: float = 0.05):
+    def publish_expected_count(self, n: int, repeat: int = 30, delay: float = 0.1):
         if not self._node or not self._pub_req:
             return
         msg = Int32()
