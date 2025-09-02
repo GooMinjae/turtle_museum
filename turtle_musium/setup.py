@@ -5,7 +5,12 @@ package_name = 'turtle_musium'
 setup(
     name=package_name,
     version='0.0.0',
-    packages=find_packages(include=['turtle_musium', 'turtle_musium.*']),
+    packages=find_packages(include=['turtle_musium',
+                                    'turtle_musium.*',
+                                    'turtle_musium_ui',
+                                    'turtle_musium_ui.*',
+                                    'data_base',
+                                    'data_base.*',]),
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -27,6 +32,7 @@ setup(
             'tracker9=turtle_musium.tracker9:main',
             'detect9=turtle_musium.detect_publisher9:main',
             'person=turtle_musium.person_count_robot1:main',
+            'ui=turtle_musium_ui.monitoring:main',
         ],
     },
 )
