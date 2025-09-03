@@ -32,6 +32,7 @@ class ExitSummaryScreen(QWidget):
         self.title_label: QLabel = None
         self.info_label: QLabel  = None
         self._current_visit_id = None
+        self._mode = "summary"
 
     def set_ui(self, *, title_label: QLabel, info_label: QLabel):
         """ .ui에서 주입 """
@@ -100,47 +101,33 @@ class ExitSummaryScreen(QWidget):
             self.refresh()  # 현재 visit_id 기준으로 요약 다시 그림
             self._mode = "summary"
 
+
     def show_daily_counts_chart(self):
-        """날짜별 인원수(예정 vs 실집계) 막대 차트를 그리고 info_label에 표시"""
-        try:
-            data = get_daily_counts() or []
-            if not data:
-                if self.info_label:
-                    self.info_label.setText("표시할 데이터가 없습니다.")
-                return
-
-            dates    = [d["date"] for d in data]
-            planned  = [int(d["planned"] or 0) for d in data]
-            counted  = [int(d["counted"] or 0) for d in data]
-
-            # ── 차트 그리기 ──
-            plt.figure(figsize=(6, 3), dpi=150)
-            x = range(len(dates))
-            width = 0.4
-            plt.bar([i - width/2 for i in x], planned, width=width, label="예정")
-            plt.bar([i + width/2 for i in x], counted, width=width, label="실집계")
-            plt.xticks(list(x), dates, rotation=45, ha="right")
-            plt.title("날짜별 인원수(예정 vs 실집계)")
-            plt.xlabel("날짜")
-            plt.ylabel("인원")
-            plt.legend()
-            plt.tight_layout()
-
-            # ── QLabel로 넣기 ──
-            buf = BytesIO()
-            plt.savefig(buf, format="png")
-            plt.close()
-            buf.seek(0)
-            img = QImage.fromData(buf.getvalue(), "PNG")
-            pix = QPixmap.fromImage(img)
-
+        # print("clicked_toggle")
+        data = get_daily_counts() or []
+        if not data:
             if self.info_label:
-                # info_label이 텍스트 보여주던 라벨이라도 Pixmap 넣으면 차트로 바뀜
-                self.info_label.setPixmap(pix)
-                self.info_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        except Exception as e:
-            if self.info_label:
-                self.info_label.setText(f"차트 표시 중 오류: {e}")
+                self.info_label.setText("표시할 데이터가 없습니다.")
+            return
+
+        dates   = [d["date"] for d in data]
+        planned = [int(d["planned"] or 0) for d in data]
+        counted = [int(d["counted"] or 0) for d in data]
+
+        plt.figure(figsize=(4, 4), dpi=150)
+        x = range(len(dates)); width = 0.4
+        plt.bar([i - width/2 for i in x], planned, width=width, label="predict")
+        plt.bar([i + width/2 for i in x], counted, width=width, label="real")
+        plt.xticks(list(x), dates, rotation=45, ha="right")
+        plt.title("count for date(predict vs real)")
+        plt.xlabel("date"); plt.ylabel("count"); plt.legend(); plt.tight_layout()
+
+        buf = BytesIO(); plt.savefig(buf, format="png"); plt.close(); buf.seek(0)
+        img = QImage.fromData(buf.getvalue(), "PNG")
+        pix = QPixmap.fromImage(img)
+        if self.info_label:
+            self.info_label.setPixmap(pix)
+            self.info_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
     def refresh(self):
         if self._current_visit_id is not None:
@@ -172,6 +159,9 @@ if __name__ == "__main__":
               "objectName을 확인하세요: final_title_label/final_info_label 또는 info_label/db_label")
         sys.exit(1)
 
+    screen.attach_chart_button(main_win.chart_btn)
+    # main_win.chart_btn.clicked.connect(screen.attach_chart_button)
+
     # UI 주입
     screen.set_ui(title_label=title_label, info_label=info_label)
 
@@ -183,7 +173,7 @@ if __name__ == "__main__":
         except ValueError:
             pass
 
-    visit_id = 10
+    visit_id = 105
     # 테스트: visit_id가 주어지면 즉시 표시
     if visit_id is not None:
         screen.show_visit(visit_id)

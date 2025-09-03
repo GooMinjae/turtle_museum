@@ -30,11 +30,11 @@ class CountBridge(QObject):
         self._thread.start()
 
     def _run(self):
-        # 1) 이 브리지 전용 Context
+        # 브리지 전용 Context
         self._ctx = Context()
         rclpy.init(context=self._ctx)
 
-        # 2) 노드 생성 (전용 context로)
+        # 2) 노드 생성 (전용 context)
         self._node = Node("count_bridge", context=self._ctx)
         self._node.get_logger().info("count_bridge started")    
         qos = QoSProfile(
@@ -45,7 +45,7 @@ class CountBridge(QObject):
 
         self._sub_done = self._node.create_subscription(Int32, self._done_topic, self._cb_done, qos)
 
-        # 3) 이 스레드 전용 Executor 만들고 노드 등록
+        # 3) 스레드 전용 Executor 만들고 노드 등록
         self._executor = SingleThreadedExecutor(context=self._ctx)
         self._executor.add_node(self._node)
 
@@ -54,7 +54,6 @@ class CountBridge(QObject):
             while self._running and rclpy.ok(context=self._ctx):
                 self._executor.spin_once(timeout_sec=0.1)
         finally:
-            # 5) 정리: executor → node → shutdown 순
             try:
                 self._executor.remove_node(self._node)
             except Exception:

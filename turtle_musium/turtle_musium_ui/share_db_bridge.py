@@ -93,29 +93,13 @@ class Pc2Bridge(QObject):
 
         self._node.create_subscription(Int32MultiArray, self._topic_art, _cb_art, qos)
 
-        # 2) 기념품 재고 질의 서비스(Trigger: message에 JSON 반환)
-        # def _on_gift_req(req, resp):
-        #     try:
-        #         vid = int(self.current_visit_id) if self.current_visit_id is not None else None
-        #         if vid is None:
-        #             resp.success = False
-        #             resp.message = "no-visit"
-        #             return resp
-        #         data = get_gift_counts_for_visit(vid)
-        #         resp.success = True
-        #         resp.message = json.dumps(data)  # {"moo":..,"pinga":..,"haowl":..,"pingu":..}
-        #         return resp
-        #     except Exception as e:
-        #         resp.success = False
-        #         resp.message = f"error:{e}"
-        #         return resp
-
-        # self._node.create_service(Trigger, self._srv_gift, _on_gift_req)
-
         def _cb_gift(req, resp):
+            self._node.get_logger().info("++++++++++++++++++++++++++++")
             try:
                 if self.current_visit_id is None:
                     resp.success = False
+                    self._node.get_logger().info(f"visit_id not set")
+
                     resp.message = "visit_id not set"
                     return resp
 
@@ -125,11 +109,12 @@ class Pc2Bridge(QObject):
                     counts = {k: int(counts[i]) if i < len(counts) else 0
                             for i, k in enumerate(GIFT_KEYS)}
 
-                # 재고 > 0 → '1', 아니면 '0'
                 bitstring = ''.join('1' if int(counts.get(k, 0)) > 0 else '0' for k in GIFT_KEYS)
 
                 resp.success = True
                 resp.message = bitstring           # 예: "1001"
+                self._node.get_logger().info(f"{bitstring}")
+                
                 return resp
             except Exception as e:
                 resp.success = False

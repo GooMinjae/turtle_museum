@@ -47,9 +47,6 @@ class GuideTracking(QWidget):
 
     def _on_done_track(self, is_done: bool):
         if is_done:
-            # 안내 멘트 업데이트(선택)
-            if self.description_label:
-                self.description_label.setText("작품 설명이 완료되었습니다. 다음 단계로 이동합니다…")
             # MonitoringApp으로 페이지 전환 신호
             self.doneSignal.emit()
 

@@ -1,7 +1,8 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QLabel, QPushButton
 from PyQt5.uic import loadUi
-
+from std_msgs.msg import Bool
+import time
 # 각 페이지 컨트롤러
 from turtle_musium_ui.page01_init_screen import Page01InitScreen
 from turtle_musium_ui.page02_barcode_scanner_screen import BarcodeScannerApp
@@ -12,8 +13,9 @@ from turtle_musium_ui.page05_exit_screen import ExitSummaryScreen
 from data_base.visit_db import insert_visit, update_counted_count
 from turtle_musium_ui.share_db_bridge import Pc2Bridge
 
-
 import rclpy
+from rclpy.context import Context
+
 
 UI_FILE = "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/monitoring_ui.ui"
 
@@ -50,7 +52,8 @@ class MonitoringApp:
         # 시작 페이지 지정 (원하는 페이지로 바꿔도 됨)
         self.stacked.setCurrentWidget(self.ui.page01_start)
         self.ui.open_btn.clicked.connect(lambda: self.stacked.setCurrentWidget(self.ui.page02_barcode))
-        self.ui.close_btn.clicked.connect(lambda: self.stacked.setCurrentWidget(self.ui.page01_start))
+        self.ui.close_btn.clicked.connect(self.ui.close)
+        self.ui.restart_btn.clicked.connect(lambda: self.stacked.setCurrentWidget(self.ui.page01_start))
         # 여기서는 UI가 기본으로 띄우는 페이지를 그대로 사용
 
         # 초기 진입 처리
@@ -91,6 +94,7 @@ class MonitoringApp:
             )
             self.pc2_bridge.artworkEvent.connect(self._on_pc2_artwork_event)
             self.pc2_bridge.start()
+        self._publish_startup_signal()
 
 
 
@@ -332,6 +336,21 @@ class MonitoringApp:
         self.ensure_ros_stopped()
         sys.exit(code)
 
+
+    def _publish_startup_signal(self):
+        ctx = Context()
+        rclpy.init(context=ctx)
+        node = rclpy.create_node("startup_publisher", context=ctx)
+        pub  = node.create_publisher(Bool, "/robot9/init", 10)
+
+        msg = Bool(); msg.data = True
+        for i in range(20):
+            pub.publish(msg)
+            node.get_logger().info(f"Startup signal {i+1}/20")
+            time.sleep(0.05)  # 짧게 쉬어주면 송신 안정화에 도움
+
+        node.destroy_node()
+        rclpy.shutdown(context=ctx)
 
 def main():
     MonitoringApp().run()

@@ -21,16 +21,16 @@ class _UiBridge(QObject):
 
 class _InitStatusNode(Node):
     def __init__(self, bridge: _UiBridge, *, 
-                 guide_topic_dock: str, guide_topic_batt: str,
-                 patrol_topic_dock: str, patrol_topic_batt: str,
-                 dock_type: str = "string", context: Context = None):
+                guide_topic_dock: str, guide_topic_batt: str,
+                patrol_topic_dock: str, patrol_topic_batt: str,
+                dock_type: str = "string", context: Context = None):
         super().__init__('init_status_node', context=context)
         self.bridge = bridge
         qos_guide = QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
-                         history=HistoryPolicy.KEEP_LAST, depth=10)
+                        history=HistoryPolicy.KEEP_LAST, depth=10)
 
         qos_pat = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
-                         history=HistoryPolicy.KEEP_LAST, depth=10)
+                        history=HistoryPolicy.KEEP_LAST, depth=10)
 
         # Dock
         self.create_subscription(DockStatus, guide_topic_dock, self._on_guide_dock_status, qos_guide)

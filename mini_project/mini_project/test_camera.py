@@ -13,7 +13,7 @@ def list_available_cameras(max_index=10):
 # list_available_cameras()
 import cv2
 
-cap = cv2.VideoCapture(2)  # 기본 카메라: 0
+cap = cv2.VideoCapture(4)  # 기본 카메라: 0
 if not cap.isOpened():
     raise RuntimeError("카메라를 열 수 없습니다. 인덱스/권한/점유 상태를 확인하세요.")
 

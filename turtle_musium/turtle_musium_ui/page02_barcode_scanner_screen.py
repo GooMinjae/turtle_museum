@@ -59,7 +59,11 @@ class BarcodeScannerApp(QWidget):
             obj_nowdate = datetime.strptime(barcode_data.split('-')[0], "%Y%m%d")
             count_people = barcode_data.split('-')[1]
             gift_data = barcode_data.split('-')[2]
+            # obj_nowdate = datetime.strptime(barcode_data[:8], "%Y%m%d")
+            # count_people = barcode_data[8]
+            # gift_data = barcode_data[9:]
         except (ValueError):
+            print(barcode_data)
             self.barcode_info_label.setText("바코드 형식이 맞지 않습니다.")
             self.close_app()
             return

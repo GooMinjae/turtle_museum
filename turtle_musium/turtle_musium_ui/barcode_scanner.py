@@ -13,6 +13,8 @@ Thread 사용 이유
 또한, 명시적인 스레드 종료 및 자원 해제를 통해 라이프 사이클을 완전히 컨트롤 할 수 있다.
 '''
 
+CAM_IDX = 4
+
 
 class BarcodeScannerWorker(QObject):
     frameCaptured = pyqtSignal(object)  # 프레임 업데이트 신호
@@ -22,7 +24,7 @@ class BarcodeScannerWorker(QObject):
     def __init__(self):
         super().__init__()
         self.running = False
-        self.cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        self.cap = cv2.VideoCapture(CAM_IDX, cv2.CAP_V4L2)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -92,9 +94,13 @@ if __name__ == "__main__":
         cv2.imshow("Barcode Scanner", frame)
 
         if detected:
-            obj_nowdate = datetime.strptime(barcode_data.split('-')[0], "%Y%m%d")
-            count_people = barcode_data.split('-')[1]
-            gift_data = barcode_data.split('-')[2]
+            # obj_nowdate = datetime.strptime(barcode_data.split('-')[0], "%Y%m%d")
+            # count_people = barcode_data.split('-')[1]
+            # gift_data = barcode_data.split('-')[2]
+
+            obj_nowdate = datetime.strptime(barcode_data[:8], "%Y%m%d")
+            count_people = barcode_data[8]
+            gift_data = barcode_data[9:]
             # info = {'datetime':obj_nowdate, 'price':free_amount}
             print("바코드 감지됨:")
             print(f"날짜: {obj_nowdate}, 인원수: {count_people}, 기념품: {gift_data}")

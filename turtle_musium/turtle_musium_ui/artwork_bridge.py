@@ -9,6 +9,8 @@ from rclpy.executors import SingleThreadedExecutor
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from std_msgs.msg import String, Bool
 
+from turtle_musium_ui.utils_resource import res_path
+
 # 작품 데이터
 PIECE_DB = {
     "gallery_A": {
@@ -45,8 +47,6 @@ class ArtworkBridge(QObject):
         self._node = None
         self._executor = None
 
-        self.going_piece_idx = 2  # "이동 중" 표시용 카운터
-
         # QoS 선택(필요 시 BEST_EFFORT로)
         self._qos = QoSProfile(
             reliability=(ReliabilityPolicy.BEST_EFFORT if use_best_effort else ReliabilityPolicy.RELIABLE),
@@ -74,8 +74,7 @@ class ArtworkBridge(QObject):
                 self.showArtwork.emit(entry.get("image", ""), entry.get("desc", ""))
             elif piece_id == "None" or piece_id == "":
                 # ★ 이미지 경로는 빈 문자열로, 설명만 보냄(경로 자리에 문구 넣지 않기)
-                self.showArtwork.emit("", f"작품 {self.going_piece_idx} 이동 중입니다.\n잠시만 기다려 주세요…")
-                self.going_piece_idx += 1
+                self.showArtwork.emit("", f"다음 작품 이동 중입니다.\n잠시만 기다려 주세요…")
             else:
                 self.showArtwork.emit("", f"알 수 없는 작품 ID: {piece_id}")
 

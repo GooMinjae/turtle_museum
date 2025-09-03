@@ -6,6 +6,7 @@ from datetime import datetime
 import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
+from fastapi.responses import RedirectResponse
 
 from dotenv import load_dotenv
 from pathlib import Path
@@ -118,3 +119,11 @@ def get_latest_visit():
             return dict(row) if row else None
     except SQLAlchemyError as e:
         raise HTTPException(500, f"DB error: {e}")
+
+@app.get("/", include_in_schema=False)
+def root():
+    return RedirectResponse(url="/docs")
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}

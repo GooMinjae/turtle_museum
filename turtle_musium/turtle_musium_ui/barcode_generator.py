@@ -50,15 +50,15 @@ class BarcodeGenerator:
 DUMMY = [
     {
         "count_people": "3",
-        "gift_data": "2211",
+        "gift_data": "1111",
     },
     {
         "count_people": "3",
-        "gift_data": "0110",
+        "gift_data": "1010",
     }
 ]
 if __name__ == "__main__":
-    dummy_idx = 1
+    dummy_idx = 0
     barcode_generator = BarcodeGenerator(
         count_people=DUMMY[dummy_idx]["count_people"], 
         gift_data=DUMMY[dummy_idx]["gift_data"],
