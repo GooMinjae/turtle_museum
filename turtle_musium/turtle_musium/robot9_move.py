@@ -10,6 +10,7 @@ from rclpy.node import Node
 # from cv_bridge import CvBridge
 # from geometry_msgs.msg import PoseWithCovarianceStamped
 from std_msgs.msg import Int32MultiArray
+from rclpy.executors import MultiThreadedExecutor
 
 # import math
 # import time
@@ -23,9 +24,9 @@ class Robot9ToMain(Node):
 
         if USE_ROBOT:
             self.navigator = TurtleBot4Navigator()
-            self.navigator.undock()
-            initial_pose = self.navigator.getPoseStamped([-0.23, 0.28], TurtleBot4Directions.SOUTH) # undock pose 
-            self.navigator.setInitialPose(initial_pose)
+            # self.navigator.undock()
+            # initial_pose = self.navigator.getPoseStamped([-0.23, 0.28], TurtleBot4Directions.SOUTH) # undock pose 
+            # self.navigator.setInitialPose(initial_pose)
 
             self.get_logger().info("set initial pose")
 
@@ -42,8 +43,8 @@ class Robot9ToMain(Node):
                     'painting_2': self.navigator.getPoseStamped([-1.71, 3.93], TurtleBot4Directions.SOUTH),
                     'painting_3': self.navigator.getPoseStamped([-0.98, 2.06], TurtleBot4Directions.NORTH),
                     'exit': self.navigator.getPoseStamped([-2.7, 1.62], TurtleBot4Directions.WEST),
-                    'gift_shop': self.navigator.getPoseStamped([-1.72, -0.09], TurtleBot4Directions.SOUTH),
-                    'gift_stay': self.navigator.getPoseStamped([-1.37, 0.61], TurtleBot4Directions.WEST),
+                    'gift_shop': self.navigator.getPoseStamped([-1.62, -0.09], TurtleBot4Directions.SOUTH),
+                    'gift_stay': self.navigator.getPoseStamped([-1.27, 0.61], TurtleBot4Directions.WEST),
                 }
             # self.goal_options = {
             #     'home': {'pose': [0.0, 0.0], 'direction': TurtleBot4Directions.SOUTH},
@@ -59,23 +60,26 @@ class Robot9ToMain(Node):
             # self.get_robot_position = self.create_subscription(
             #     PoseWithCovarianceStamped, '/robot8/amcl_pose', self.cb_robot_position, 10
             # )
-        self.sub_person_exit = self.create_subscription(Bool,'/robot9/person_exit',self.callback_start,10)
-        self.sub_gift = self.create_subscription(Bool, '/robot9/end_track1', self.callback_gift_go, 10)
+        self.sub_person_exit = self.create_subscription(Bool,'/exit/people_detected',self.callback_start,10)
+        self.sub_start = self.create_subscription(Bool,'/robot9/init',self.callback_start,10)
+        self.sub_gift = self.create_subscription(Bool, '/robot8/end_track1', self.callback_gift_go, 10)
         self.sub_gfit_stay = self.create_subscription(Bool,'/robot9/gift_stay',self.callback_gift_stay,10)
-        self.sub_guide_end = self.create_subscription(Bool,'/robot9/end_track3',self.callback_guide_end,10)
+        self.sub_guide_end = self.create_subscription(Bool,'/robot8/end_track3',self.callback_guide_end,10)
         self.sub_check = self.create_subscription(String,'/robot9/painting',self.callback_painting,10)
-        self.pub_database = self.create_publisher(Int32MultiArray,'/robot9/galary_state',10)
 
-        
+
+
+        self.pub_database = self.create_publisher(Int32MultiArray,'/robot9/gallery_state',10)
         self.pub_gift_start = self.create_publisher(Bool,'/robot9/gift_start',10)
         self.pub_person = self.create_publisher(Bool,'/robot9/person',10)
-        # self.pub_check = self.create_publisher(Bool,"/robot9/paint_check",10)
+        self.pub_check = self.create_publisher(Bool,"/robot9/paint_check",10)
         self.pice_1 = False
         self.pice_2 = False
         self.pice_3 = False
         self.database = []
         self.current_location_index = 0
         self.waiting_for_painting = False
+        self.patrol_result = False
 
     def callback_painting(self, msg: String):
         if msg.data == "pice 1" and not self.pice_1:
@@ -87,6 +91,12 @@ class Robot9ToMain(Node):
         elif msg.data == "pice3" and not self.pice_3:
             self.pice_3 = True
             self.database.append(1)
+        self.get_logger().info(f"{msg.data}")
+        if len(self.database) == 3:
+            data = Int32MultiArray()
+            data.data = self.database
+            self.pub_database.publish(data)
+            self.database = []
 
         if self.waiting_for_painting:
             # 현재 location 확인 후 플래그 체크
@@ -96,27 +106,25 @@ class Robot9ToMain(Node):
             (loc == 'painting_3' and self.pice_3):
                 self.waiting_for_painting = False
                 self.current_location_index += 1
-                self.pice_1 = False
-                self.pice_2 = False
-                self.pice_3 = False
-
                 self.start_patrol()
-        if len(self.database) == 3:
-            data = Int32MultiArray()
-            data.data = self.database
-            self.pub_database.publish(data)
+
             
         
     # giftshop 출발
     def callback_gift_go(self, msg: Bool):
         if msg.data:
             self.get_logger().warn("gift shop go")
-            self.gift_result = True
-            self.patrol = False
+
+            self.go_to_pose_and_check('gift_shop')
+            self.pub_gift_start.publish(msg)
+            self.patrol_result = False
+
+
+
 
     # 기념품 가져오고 대기
     def callback_gift_stay(self,msg: Bool):
-        if msg:
+        if msg.data:
             self.go_to_pose_and_check('gift_stay')
             self.gift_stay = True
     # 가이드로봇 가이드 끝        
@@ -135,25 +143,46 @@ class Robot9ToMain(Node):
         self.get_logger().info("경로 시작")
 
         self.sequence = ['entrance', 'painting_1', 'painting_2', 'painting_3', 'exit']
+        self.patrol_result = True
+        self.current_location_index = 0
         self.start_patrol()
     def start_patrol(self):
-        if self.current_location_index >= len(self.sequence):
-            self.get_logger().info("모든 경로 완료")
-            self.current_location_index = 0
-            
-        msg =  Bool()
-        msg.data = True
-        location = self.sequence[self.current_location_index]
+        if self.patrol_result:
+            if self.current_location_index >= len(self.sequence):
+                self.get_logger().info("모든 경로 완료")
+                self.go_to_pose_and_check('gift_stay')
+                msg = Bool()
+                msg.data = False
+                self.pub_check.publish(msg)
 
-        if location in ('painting_1', 'painting_2', 'painting_3'):
-            self.pub_gift_start.publish(msg)
-            self.waiting_for_painting = True
-            self.go_to_pose_and_check(location)
-            self.get_logger().info(f"{location} 도착, 그림 인식 대기 중...")
-        else:
-            self.go_to_pose_and_check(location)
-            self.current_location_index += 1
-            self.start_patrol()
+                
+                self.pice_1 = False
+                self.pice_2 = False
+                self.pice_3 = False
+                location = None
+                # if self.gift_result:
+                #     msg= Bool()
+                #     msg.data = True
+                #     self.navigator.startToPose(self.goal_options['gift_shop'])
+                #     self.pub_gift_start.publish(msg)
+
+                #     self.gift_result = False
+                #     self.patrol_result = False
+            
+            else:
+                location = self.sequence[self.current_location_index]
+
+            if location in ('painting_1', 'painting_2', 'painting_3'):
+                msg =  Bool()
+                msg.data = True
+                self.pub_check.publish(msg)
+                self.waiting_for_painting = True
+                self.go_to_pose_and_check(location)
+                self.get_logger().info(f"{location} 도착, 그림 인식 대기 중...")
+            elif location in ("entrance","exit"):
+                self.go_to_pose_and_check(location)
+                self.current_location_index += 1
+                self.start_patrol()
 
     def go_to_pose_and_check(self, location_name):
         self.get_logger().info(f"{location_name} 로 이동")
@@ -161,15 +190,20 @@ class Robot9ToMain(Node):
         self.navigator.startToPose(self.goal_options[location_name])
 
         while not self.navigator.isTaskComplete():
-            if self.gift_result:
-                self.get_logger().warn("이동 중 인터럽트 발생 → 경로 취소")
-                self.navigator.cancelTask()
-                self.gift_result = False
-                return True
+            # if self.gift_result:
+            #     self.get_logger().warn("이동 중 인터럽트 발생 → 경로 취소")
+            #     self.navigator.cancelTask()
+            #     msg= Bool()
+            #     msg.data = True
+            #     self.navigator.startToPose(self.goal_options['gift_shop'])
+            #     self.pub_gift_start.publish(msg)
+
+            #     self.gift_result = False
+            #     self.patrol_result = False
+            #     return
             rclpy.spin_once(self, timeout_sec=0.1)
 
         self.get_logger().info(f"{location_name} 도착")
-        return False
 
     # def call_check_painting_service(self):
     #     self.get_logger().info("그림 유무 확인 중...")
@@ -209,12 +243,13 @@ class Robot9ToMain(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = Robot9ToMain()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+        executor.spin()
     finally:
-        if rclpy.ok():
-            rclpy.shutdown()
+        executor.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
 if __name__ == '__main__':
     main()

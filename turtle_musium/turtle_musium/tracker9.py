@@ -5,7 +5,8 @@ from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from tf2_ros import Buffer, TransformListener
 import tf2_geometry_msgs  
-
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.duration import Duration 
 from turtlebot4_navigation.turtlebot4_navigator import TurtleBot4Directions, TurtleBot4Navigator
 import numpy as np
 import time
@@ -34,6 +35,7 @@ class tracker_node(Node):
         self.last_feedback_log_time = 0
         self.pose = PoseStamped()
         self.gift_put = False
+        self.label = None
 
 
         # self.create_timer(0.5, self.process_frame)
@@ -45,42 +47,35 @@ class tracker_node(Node):
             
     def callback_depth(self,pt):
 
-            try:
-                if self.label in ("pingu","moo","haowl","pinga"):
-                    pt.point.z = pt.point.z - 0.5
-                self.get_logger().info(f"Detected at map: (x = {pt.point.x:.2f}, y = {pt.point.y:.2f} z = {pt.point.z:.2f})")
-                if pt.point.z <= 0.0:
-                    pt.point.z = 0.0
-                pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
-                self.latest_map_point = pt_map
+        try:
+            if self.label in ("pingu","moo","haowl","pinga"):
+                pt.point.z = pt.point.z - 0.3
+            self.get_logger().info(f"Detected at map: (x = {pt.point.x:.2f}, y = {pt.point.y:.2f} z = {pt.point.z:.2f})")
+            if pt.point.z <= 0.0:
+                pt.point.z = 0.0
+            pt_map = self.tf_buffer.transform(pt, 'map', timeout=Duration(seconds=0.5))
+            self.latest_map_point = pt_map
 
-                # Don't send more goals if we're already close
-                if self.block_goal_updates:
-                    self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
-                    
-
-                self.get_logger().info(f"Detected at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f},{pt_map.point.y:.2f})")
-
-                if self.goal_handle:
-                    self.get_logger().info("Canceling previous goal...")
-                    self.goal_handle.cancel_goal_async()
-
-                self.send_goal()
+            # Don't send more goals if we're already close
+            if self.block_goal_updates:
+                self.get_logger().info(f"Within ({self.close_enough_distance}) meter — skipping further goal updates.")
                 
 
-                self.target_result = 'None'
+            self.get_logger().info(f"Detected at map: ({pt_map.point.x:.2f}, {pt_map.point.y:.2f},{pt_map.point.y:.2f})")
+
+            if self.goal_handle:
+                self.get_logger().info("Canceling previous goal...")
+                self.goal_handle.cancel_goal_async()
+
+            self.send_goal()
+            
 
 
-            except Exception as e:
-                self.get_logger().warn(f"TF transform to map failed: {e}")
+
+        except Exception as e:
+            self.get_logger().warn(f"TF transform to map failed: {e}")
 
 
-    # def process_frame(self):
-        # self.send_goal()
-        # if self.target_result == "bottle":
-        #     self.target_result = 'None'
-        #     self.pub_water.publish(Bool(data=True))
-        #     self.get_logger().info("traget_result=bottle")
 
     def send_goal(self):
 
@@ -143,13 +138,14 @@ class tracker_node(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = tracker_node()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
+        executor.spin()
     finally:
-        if rclpy.ok():
-            rclpy.shutdown()
+        executor.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':

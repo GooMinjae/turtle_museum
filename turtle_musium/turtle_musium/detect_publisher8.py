@@ -10,6 +10,7 @@ from std_msgs.msg import String, Bool, Int32
 
 from cv_bridge import CvBridge
 from ultralytics import YOLO
+from std_srvs.srv import Trigger
 
 import numpy as np
 import cv2
@@ -29,18 +30,20 @@ class YoloPerson(Node):
 
         self.camera_frame_id = None
         # ---- Topics (기존 유지) ----
-        self.topic_rgb = '/robot8/oakd/rgb/image_raw/compressed'
-        self.topic_depth = '/robot8/oakd/stereo/image_raw'
-        self.topic_caminfo = '/robot8/oakd/rgb/camera_info'
-        self.pub_point_topic = '/robot8/point_camera'
-        self.pub_frame_topic = '/robot8/frame'
+        self.topic_rgb = '/robot9/oakd/rgb/image_raw/compressed'
+        self.topic_depth = '/robot9/oakd/stereo/image_raw'
+        self.topic_caminfo = '/robot9/oakd/rgb/camera_info'
+        self.pub_point_topic = '/robot9/point_camera'
+        self.pub_frame_topic = '/robot9/frame'
         # 신규 추가(탐지된 사람 수)
-        self.pub_people_cnt_topic = '/robot8/audience_count_from_detector'
+        self.pub_people_cnt_topic = '/robot9/audience_count_from_detector'
 
         # ---- Publishers ----
+        self.pub_label = self.create_publisher(String,'/robot9/painting',10)
+        
         self.person_point_cam_pub = self.create_publisher(PointStamped, self.pub_point_topic, 10)
         self.person_pub = self.create_publisher(Image, self.pub_frame_topic, 10)
-        self.pub_people_count = self.create_publisher(Int32, self.pub_people_cnt_topic, 10)
+        # self.pub_people_count = self.create_publisher(Int32, self.pub_people_cnt_topic, 10)
 
         # ---- Subscribers ----
         self.bridge = CvBridge()
@@ -49,6 +52,9 @@ class YoloPerson(Node):
         self.last_depth = None
         self.last_depth_stamp = None
         self.K = None
+        self.sub_gift_start = self.create_subscription(Bool,'/robot9/gift_start',self.callback_giftshop,10)
+        self.sub_person = self.create_subscription(Bool,'/robot9/person',self.callback_person,10)
+        self.sub_painting = self.create_subscription(Bool,'/robot9/paint_check',self.callback_painting,10)
 
         self.sub_rgb = self.create_subscription(
             CompressedImage, self.topic_rgb, self.cb_rgb, self.qos_sensor
@@ -65,7 +71,10 @@ class YoloPerson(Node):
         self.model = YOLO('/home/rokey/turtlebot4_ws/src/turtle_musium/resource/only_people_8n_batch32.pt')
         self.conf = 0.7
 
-        # 처리 스레드
+        # 처리 스레드      
+        self.gift_data = []
+        self.gift_name = ["moo", "pinga", "haowl", "pingu"]
+        self.gift_client = self.create_client(Trigger, '/robot9/gift_data')
         self.lock = threading.Lock()
         self.display_frame = None
         self.last_processed_stamp = None
@@ -74,6 +83,55 @@ class YoloPerson(Node):
         self.th.start()
 
     # === Callbacks ===
+    def callback_painting(self,msg: Bool):
+        self.should_infer = msg.data
+
+    def callback_giftshop(self, msg: Bool):
+        self.gift_data = []
+
+        if not self.gift_client.wait_for_service(timeout_sec=3.0):
+            self.get_logger().error('gift_data 서비스 없음')
+            return
+
+        req = Trigger.Request()
+        future = self.gift_client.call_async(req)
+        rclpy.spin_until_future_complete(self, future)
+
+        if future.result() is None:
+            self.get_logger().error('서비스 응답 없음')
+            return
+
+        result = future.result()
+        if not result.success:
+            self.get_logger().error(f"서비스 실패: {result.message}")
+            return
+
+        data = result.message.strip()  # "1010"
+
+        # gift_name 길이에 맞춰 보정
+        if len(data) < len(self.gift_name):
+            data += "0" * (len(self.gift_name) - len(data))
+        data = data[:len(self.gift_name)]
+
+        # '1'인 항목만 추가
+        for idx, num in enumerate(data):
+            if num == "1":
+                self.gift_data.append(self.gift_name[idx])
+
+        self.should_infer = msg.data
+        self.get_logger().info(f"gift_data={self.gift_data}, should_infer={self.should_infer}")
+
+
+
+
+    def callback_person(self,msg: Bool):
+        self.should_infer = msg.data
+        if msg.data:
+            self.person_detect = True
+        else:
+            self.person_detect = False
+
+
     def cb_caminfo(self, msg: CameraInfo):
         self.camera_frame_id = msg.header.frame_id
         if self.K is None:
@@ -105,11 +163,12 @@ class YoloPerson(Node):
     def process_loop(self):
         rate = self.create_rate(30)
         while rclpy.ok() and self.processing:
-            try:
-                self.process_frame()
-            except Exception as e:
-                self.get_logger().warn(f"process_frame error: {e}")
-            rate.sleep()
+            if self.should_infer:
+                try:
+                    self.process_frame()
+                except Exception as e:
+                    self.get_logger().warn(f"process_frame error: {e}")
+                rate.sleep()
 
     def process_frame(self):
         with self.lock:
@@ -140,14 +199,31 @@ class YoloPerson(Node):
             conf = float(det.conf[0])
             x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
 
-            if label == 'person':
-                person_cnt += 1
+            if label == 'person' and self.person_detect:
+                # person_cnt += 1
                 area = (x2 - x1) * (y2 - y1)
                 if area > max_area:
                     max_area = area
                     cx = int((x1 + x2) / 2)
                     cy = int((y1 + y2) / 2)
                     best_main_center = (cx, cy)
+            elif label in self.gift_data:
+                msg = String()
+                msg.data = label
+                self.pub_label.publish(msg)
+                area = (x2 - x1) * (y2 - y1)
+                if area > max_area:
+                    max_area = area
+                    cx = int((x1 + x2) / 2)
+                    cy = int((y1 + y2) / 2)
+                    best_main_center = (cx, cy)
+                self.should_infer = False
+            elif label in ('pice 1', 'pice2', 'pice3'):
+                msg = String()
+                msg.data = label
+                self.pub_label.publish(msg)
+
+            
 
             # 시각화
             cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
@@ -186,7 +262,7 @@ class YoloPerson(Node):
         self.person_pub.publish(self.bridge.cv2_to_imgmsg(frame, encoding='bgr8'))
 
         # 사람 수 퍼블리시(신규)
-        self.pub_people_count.publish(Int32(data=person_cnt))
+        # self.pub_people_count.publish(Int32(data=person_cnt))
 
 def main():
     rclpy.init()
@@ -251,17 +327,17 @@ if __name__ == '__main__':
 #         self.get_logger().info("YOLOv8 model loaded.")
 
 #         # === Publishers ===
-#         self.main_pub = self.create_publisher(String, '/robot8/which_hand', 10)
-#         self.person_point_cam_pub = self.create_publisher(PointStamped, '/robot8/point_camera', 10)
+#         self.main_pub = self.create_publisher(String, '/robot9/which_hand', 10)
+#         self.person_point_cam_pub = self.create_publisher(PointStamped, '/robot9/point_camera', 10)
 
 #         # === Subscriptions ===
 #         qos_profile = QoSProfile(depth=2)
 #         qos_profile.reliability = QoSReliabilityPolicy.BEST_EFFORT
 
-#         self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
+#         self.create_subscription(CameraInfo, '/robot9/oakd/rgb/camera_info', self.camera_info_callback, 10)
 
-#         self.rgb_sub = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed', qos_profile=qos_profile)
-#         self.depth_sub = Subscriber(self, Image, '/robot8/oakd/stereo/image_raw', qos_profile=qos_profile)
+#         self.rgb_sub = Subscriber(self, CompressedImage, '/robot9/oakd/rgb/image_raw/compressed', qos_profile=qos_profile)
+#         self.depth_sub = Subscriber(self, Image, '/robot9/oakd/stereo/image_raw', qos_profile=qos_profile)
 
 #         self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.4)
 #         self.ts.registerCallback(self.synced_rgb_depth_cb)
