@@ -30,7 +30,7 @@
      <string notr="true"/>
     </property>
     <property name="currentIndex">
-     <number>0</number>
+     <number>2</number>
     </property>
     <widget class="QWidget" name="page01_start">
      <widget class="QPushButton" name="open_btn">
@@ -247,13 +247,13 @@ border-color: rgb(115, 135, 173);
      </widget>
     </widget>
     <widget class="QWidget" name="page03_description">
-     <widget class="QLabel" name="piece_img">
+     <widget class="QLabel" name="guide_cam">
       <property name="geometry">
        <rect>
-        <x>70</x>
-        <y>10</y>
-        <width>640</width>
-        <height>480</height>
+        <x>40</x>
+        <y>180</y>
+        <width>320</width>
+        <height>240</height>
        </rect>
       </property>
       <property name="font">
@@ -272,9 +272,9 @@ border-color: rgb(115, 135, 173);
       <property name="geometry">
        <rect>
         <x>70</x>
-        <y>510</y>
+        <y>470</y>
         <width>641</width>
-        <height>171</height>
+        <height>211</height>
        </rect>
       </property>
       <property name="font">
@@ -284,6 +284,69 @@ border-color: rgb(115, 135, 173);
       </property>
       <property name="text">
        <string>__ 작품 이동중</string>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+     </widget>
+     <widget class="QLabel" name="patrol_cam">
+      <property name="geometry">
+       <rect>
+        <x>400</x>
+        <y>180</y>
+        <width>320</width>
+        <height>240</height>
+       </rect>
+      </property>
+      <property name="font">
+       <font>
+        <pointsize>18</pointsize>
+       </font>
+      </property>
+      <property name="text">
+       <string>TextLabel</string>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+     </widget>
+     <widget class="QLabel" name="guide_bot_label">
+      <property name="geometry">
+       <rect>
+        <x>40</x>
+        <y>30</y>
+        <width>320</width>
+        <height>121</height>
+       </rect>
+      </property>
+      <property name="font">
+       <font>
+        <pointsize>18</pointsize>
+       </font>
+      </property>
+      <property name="text">
+       <string>GUIDE BOT</string>
+      </property>
+      <property name="alignment">
+       <set>Qt::AlignCenter</set>
+      </property>
+     </widget>
+     <widget class="QLabel" name="patrol_bot_label">
+      <property name="geometry">
+       <rect>
+        <x>400</x>
+        <y>30</y>
+        <width>320</width>
+        <height>121</height>
+       </rect>
+      </property>
+      <property name="font">
+       <font>
+        <pointsize>18</pointsize>
+       </font>
+      </property>
+      <property name="text">
+       <string>PATROL BOT</string>
       </property>
       <property name="alignment">
        <set>Qt::AlignCenter</set>

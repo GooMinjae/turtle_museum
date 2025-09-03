@@ -230,10 +230,11 @@ class MonitoringApp:
     def start_page03(self):
         if self.page03 is None:
             self.page03 = GuideTracking()
-            cam_label  = self.ui.findChild(QLabel, "piece_img")
+            guide_cam_label  = self.ui.findChild(QLabel, "guide_cam")
+            patrol_cam_label  = self.ui.findChild(QLabel, "patrol_cam")
             info_label = self.ui.findChild(QLabel, "description_label")
             # set_ui 안에서 ArtworkBridge가 start() 되며, 내부 스레드에서 rclpy.init()을 수행
-            self.page03.set_ui(cam_label=cam_label, info_label=info_label)
+            self.page03.set_ui(guide_cam_label=guide_cam_label, patrol_cam_label=patrol_cam_label, info_label=info_label)
             self.page03.doneSignal.connect(self._go_to_page04)
         # 별도 start 없음 (set_ui에서 시작)
 
@@ -344,10 +345,10 @@ class MonitoringApp:
         pub  = node.create_publisher(Bool, "/robot9/init", 10)
 
         msg = Bool(); msg.data = True
-        for i in range(20):
+        for i in range(50):
             pub.publish(msg)
             node.get_logger().info(f"Startup signal {i+1}/20")
-            time.sleep(0.05)  # 짧게 쉬어주면 송신 안정화에 도움
+            time.sleep(0.1)  # 짧게 쉬어주면 송신 안정화에 도움
 
         node.destroy_node()
         rclpy.shutdown(context=ctx)
