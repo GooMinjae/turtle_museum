@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import rclpy
 from rclpy.node import Node
 from rclpy.executors import MultiThreadedExecutor
@@ -5,7 +6,7 @@ from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
 
 from sensor_msgs.msg import Image, CameraInfo, CompressedImage
 from geometry_msgs.msg import PointStamped
-from std_msgs.msg import String, Bool
+from std_msgs.msg import String, Bool, Int32
 
 from cv_bridge import CvBridge
 from ultralytics import YOLO
@@ -14,322 +15,178 @@ import numpy as np
 import cv2
 import time
 import threading
-from collections import namedtuple
-from message_filters import Subscriber, ApproximateTimeSynchronizer
-
-Pair = namedtuple("Pair", "rgb depth stamp frame_id")
-
 
 class YoloPerson(Node):
     def __init__(self):
-        super().__init__('detect_to_thing')
+        super().__init__('yolo_person_detector')
 
-        # === Internal state ===
+        # QoS
+        self.qos_sensor = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
+        self.camera_frame_id = None
+        # ---- Topics (기존 유지) ----
+        self.topic_rgb = '/robot8/oakd/rgb/image_raw/compressed'
+        self.topic_depth = '/robot8/oakd/stereo/image_raw'
+        self.topic_caminfo = '/robot8/oakd/rgb/camera_info'
+        self.pub_point_topic = '/robot8/point_camera'
+        self.pub_frame_topic = '/robot8/frame'
+        # 신규 추가(탐지된 사람 수)
+        self.pub_people_cnt_topic = '/robot8/audience_count_from_detector'
+
+        # ---- Publishers ----
+        self.person_point_cam_pub = self.create_publisher(PointStamped, self.pub_point_topic, 10)
+        self.person_pub = self.create_publisher(Image, self.pub_frame_topic, 10)
+        self.pub_people_count = self.create_publisher(Int32, self.pub_people_cnt_topic, 10)
+
+        # ---- Subscribers ----
         self.bridge = CvBridge()
+        self.last_rgb = None
+        self.last_rgb_stamp = None
+        self.last_depth = None
+        self.last_depth_stamp = None
         self.K = None
-        self.rgb_image = None
-        self.depth_image = None
-        self.camera_frame = None
-        self.shutdown_requested = False
-        self.logged_intrinsics = False
-        self.inference_active = False
-        self.target_id = None
-        self.lost_count = 0
-        self.MAX_LOST = 10  # 타겟 분실 후 재획득까지 허용 프레임 수
 
-        self._pair_lock = threading.Lock()
-        self._latest_pair = None
-        self.infer_lock = threading.Lock()
+        self.sub_rgb = self.create_subscription(
+            CompressedImage, self.topic_rgb, self.cb_rgb, self.qos_sensor
+        )
+        self.sub_depth = self.create_subscription(
+            Image, self.topic_depth, self.cb_depth, self.qos_sensor
+        )
+        self.sub_caminfo = self.create_subscription(
+            CameraInfo, self.topic_caminfo, self.cb_caminfo, 10
+        )
+
+        # ---- YOLO (모델 단일 로드) ----
+        # 기존 경로 보존: only_people_8n_batch32.pt (사람 전용)
+        self.model = YOLO('/home/rokey/turtlebot4_ws/src/turtle_musium/resource/only_people_8n_batch32.pt')
+        self.conf = 0.7
+
+        # 처리 스레드
+        self.lock = threading.Lock()
+        self.display_frame = None
         self.last_processed_stamp = None
+        self.processing = True
+        self.th = threading.Thread(target=self.process_loop, daemon=True)
+        self.th.start()
 
-        # === Load YOLO model ===
-        self.model = YOLO(
-            "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/only_people_8n_batch32.pt"
-        )
-        self.model.to('cuda')
-        self.get_logger().info("YOLOv8 model loaded.")
+    # === Callbacks ===
+    def cb_caminfo(self, msg: CameraInfo):
+        self.camera_frame_id = msg.header.frame_id
+        if self.K is None:
+            self.K = np.array(msg.k, dtype=np.float32).reshape(3, 3)
+            self.get_logger().info(f"Camera K set: {self.K.tolist()}")
 
-        # === Publishers ===
-        self.main_pub = self.create_publisher(String, '/robot8/which_hand', 10)
-        self.person_point_cam_pub = self.create_publisher(PointStamped, '/robot8/point_camera', 10)
-        self.person_pub = self.create_publisher(Image, '/robot8/frame', 10)
-
-        # === Subscriptions ===
-        qos_profile = QoSProfile(
-            history=QoSHistoryPolicy.KEEP_LAST,  # 최신 depth 개수만 유지
-            depth=1,                            # 큐 크기 (10개 유지)
-            reliability=QoSReliabilityPolicy.BEST_EFFORT
-        )
-
-        self.create_subscription(Bool, '/robot8/people', self.people_check_cb, 10)
-        self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
-
-        self.rgb_sub = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed', qos_profile=qos_profile)
-        self.depth_sub = Subscriber(self, Image, '/robot8/oakd/stereo/image_raw', qos_profile=qos_profile)
-
-        self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.4)
-        self.ts.registerCallback(self.synced_rgb_depth_cb)
-
-        # === Threads ===
-        self.infer_thread = threading.Thread(target=self.run_inference_thread, daemon=True)
-        self.infer_thread.start()
-
-        # self.display_frame = None
-        # # self.display_thread = threading.Thread(target=self.display_loop, daemon=True)
-        # self.display_thread.start()
-
-    # ---------------------------
-    # Callbacks & processing
-    # ---------------------------
-    def people_check_cb(self, msg: Bool):
-        if msg.data:
-            self.get_logger().info("People check True -> start inference")
-            self.inference_active = True
-        else:
-            self.inference_active = False
-
-    def camera_info_callback(self, msg):
-        self.K = np.array(msg.k).reshape(3, 3)
-        if not self.logged_intrinsics:
-            self.get_logger().info("Camera intrinsics received")
-            self.logged_intrinsics = True
-
-    def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: Image):
+    def cb_rgb(self, msg: CompressedImage):
         try:
-            # Decode RGB
-            np_arr = np.frombuffer(rgb_msg.data, np.uint8)
-            rgb = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-
-            # Decode depth
-            depth_raw = self.bridge.imgmsg_to_cv2(depth_msg, "passthrough")
-            if depth_msg.encoding == "16UC1":
-                depth_raw = depth_raw.astype(np.float32) / 1000.0  # mm -> m
-            elif depth_msg.encoding == "32FC1":
-                pass
-            else:
-                raise ValueError(f"Unexpected encoding: {depth_msg.encoding}")
-
-            # Crop depth to align with RGB FOV
-            h, w = depth_raw.shape
-            crop_x = int(0.26 * w / 2) * 2
-            crop_y = int(0.18 * h / 2) * 2
-            depth_crop = depth_raw[crop_y:h - crop_y, crop_x:w - crop_x]
-            depth_aligned = cv2.resize(depth_crop, (w, h), cv2.INTER_NEAREST)
-
-            with self._pair_lock:
-                self._latest_pair = Pair(
-                    rgb=rgb,
-                    depth=depth_aligned,
-                    stamp=rgb_msg.header.stamp,
-                    frame_id=rgb_msg.header.frame_id or "oakd_rgb_frame"
-                )
-
+            frame = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
-            self.get_logger().error(f"Sync decode failed: {e}")
+            self.get_logger().warn(f"RGB decode failed: {e}")
+            return
+        with self.lock:
+            self.last_rgb = frame
+            self.last_rgb_stamp = msg.header.stamp
 
-    # ---------------------------
-    # Inference loop
-    # ---------------------------
-    def run_inference_thread(self):
-        while not self.shutdown_requested:
-            self.process_frame()
-            time.sleep(0.5)
+    def cb_depth(self, msg: Image):
+        try:
+            depth = self.bridge.imgmsg_to_cv2(msg, desired_encoding='passthrough')
+            if depth.dtype != np.uint16 and depth.dtype != np.float32:
+                depth = depth.astype(np.uint16)
+        except Exception as e:
+            self.get_logger().warn(f"Depth decode failed: {e}")
+            return
+        with self.lock:
+            self.last_depth = depth
+            self.last_depth_stamp = msg.header.stamp
+
+    def process_loop(self):
+        rate = self.create_rate(30)
+        while rclpy.ok() and self.processing:
+            try:
+                self.process_frame()
+            except Exception as e:
+                self.get_logger().warn(f"process_frame error: {e}")
+            rate.sleep()
 
     def process_frame(self):
-        if not self.inference_active:
+        with self.lock:
+            if self.last_rgb is None or self.last_depth is None:
+                return
+            # 타임스탬프 최신 조합 사용
+            rgb = self.last_rgb.copy()
+            depth = self.last_depth.copy()
+            stamp = self.last_rgb_stamp if self.last_rgb_stamp is not None else self.get_clock().now().to_msg()
+
+        # YOLO 추론
+        res = self.model.predict(rgb, conf=self.conf, verbose=False)
+        if not res:
             return
-        if self.K is None:
-            return
-        if not self.infer_lock.acquire(blocking=False):
-            return
+        results = res[0]
 
-        try:
-            with self._pair_lock:
-                if self._latest_pair is None:
-                    return
-                pair = self._latest_pair
+        H, W = rgb.shape[:2]
+        frame = rgb.copy()
+        person_cnt = 0
+        best_main_center = None
+        best_main_depth = None
 
-            rgb = pair.rgb.copy()
-            depth = pair.depth.copy()
+        # 단일 가장 큰 person 박스를 대표로 선택 (기존 동작 가정)
+        max_area = 0
+        for det in results.boxes:
+            cls = int(det.cls[0])
+            label = self.model.names[cls].lower()
+            conf = float(det.conf[0])
+            x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
 
-            # ★ 변경: predict -> track (ID 사용)
-        #     results = self.model.track(
-        #         rgb, conf=0.7, verbose=False, persist=True, tracker='bytetrack.yaml'
-        #     )[0]
+            if label == 'person':
+                person_cnt += 1
+                area = (x2 - x1) * (y2 - y1)
+                if area > max_area:
+                    max_area = area
+                    cx = int((x1 + x2) / 2)
+                    cy = int((y1 + y2) / 2)
+                    best_main_center = (cx, cy)
 
-        #     frame = rgb.copy()
-        #     any_main = False
-        #     H, W = depth.shape[:2]
+            # 시각화
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, f"{label} {conf:.2f}", (x1, max(0, y1-5)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-        #     persons = []  # (track_id, conf, (x1,y1,x2,y2), (cx,cy))
-
-        #     for det in results.boxes:
-        #         cls = int(det.cls[0])
-        #         label = self.model.names[cls].lower()
-        #         conf = float(det.conf[0])
-        #         x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
-
-        #         # 시각화 (원래 코드 유지)
-        #         cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        #         cv2.putText(frame, f"{label} {conf:.2f}", (x1, max(0, y1-5)),
-        #                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-        #         # 제스처 퍼블리시 (원래 로직 유지)
-        #         if label in ("one", "five"):
-        #             self.main_pub.publish(String(data=label))
-        #             any_main = True
-
-        #         # ★ 변경: person만 추적 candidate로 수집 (ID 포함)
-        #         if label == "person":
-        #             # det.id가 None일 수 있어 안전 처리
-        #             tid = int(det.id[0]) if getattr(det, 'id', None) is not None else -1
-        #             cx = (x1 + x2) // 2
-        #             cy = (y1 + y2) // 2
-        #             persons.append((tid, conf, (x1, y1, x2, y2), (cx, cy)))
-
-        #     # ★ 변경: 타겟 ID가 없으면(초기) conf가 가장 높은 사람으로 설정
-        #     if self.target_id is None:
-        #         if persons:
-        #             best = max(persons, key=lambda p: p[1])  # conf 최대
-        #             self.target_id = best[0] if best[0] != -1 else None
-        #             self.lost_count = 0
-
-        #     # ★ 변경: 현재 타겟 ID와 매칭되는 detection 찾기
-        #     target_det = None
-        #     if self.target_id is not None:
-        #         for tid, conf, bbox, center in persons:
-        #             if tid == self.target_id:
-        #                 target_det = (tid, conf, bbox, center)
-        #                 break
-
-        #     # ★ 변경: 타겟이 보이면 그 사람만 퍼블리시, 아니면 분실 카운트 증가
-        #     if target_det is not None:
-        #         self.lost_count = 0
-        #         _, _, (x1, y1, x2, y2), (u, v) = target_det
-
-        #         # 표시용 점
-        #         cv2.circle(frame, (u, v), 4, (0, 255, 0), -1)
-
-        #         # 3D 계산 및 퍼블리시 (원래 코드 유지)
-        #         if 0 <= u < W and 0 <= v < H:
-        #             z = float(depth[v, u])
-        #             if z > 0.0 and not np.isnan(z):
-        #                 fx, fy = self.K[0, 0], self.K[1, 1]
-        #                 cx0, cy0 = self.K[0, 2], self.K[1, 2]
-        #                 X = (u - cx0) * z / fx
-        #                 Y = (v - cy0) * z / fy
-
-        #                 pt = PointStamped()
-        #                 pt.header.frame_id = pair.frame_id
-        #                 pt.header.stamp = pair.stamp
-        #                 pt.point.x, pt.point.y, pt.point.z = X, Y, z
-        #                 self.person_point_cam_pub.publish(pt)
-        #                 self.get_logger().info("person detect!")
-        #     else:
-        #         # 타겟 분실
-        #         self.lost_count += 1
-        #         if self.lost_count > self.MAX_LOST:
-        #             # 너무 오래 못 보면 다시 “conf 최고”로 재획득
-        #             if persons:
-        #                 best = max(persons, key=lambda p: p[1])
-        #                 self.target_id = best[0] if best[0] != -1 else None
-        #                 self.lost_count = 0
-        #             else:
-        #                 self.target_id = None  # 화면에 아무도 없음
-
-        #     if not any_main:
-        #         self.main_pub.publish(String(data="none"))
-
-        #     self.display_frame = frame
-        #     self.person_pub.publish(Image(data=frame))
-        #     self.last_processed_stamp = pair.stamp
-
-        # finally:
-        #     self.infer_lock.release()
-
-
-    def process_frame(self):
-        if self.K is None:
-            return
-        if not self.infer_lock.acquire(blocking=False):
-            return
-
-        try:
-            with self._pair_lock:
-                if self._latest_pair is None:
-                    return
-                pair = self._latest_pair
-                # self._latest_pair = None
-
-            rgb = pair.rgb.copy()
-            depth = pair.depth.copy()
-
-            results = self.model.predict(rgb, conf=0.7, verbose=False)[0]
-            frame = rgb.copy()
-
-            any_main = False
-            H, W = depth.shape[:2]
-
-            for det in results.boxes:
-                cls = int(det.cls[0])
-                self.label = self.model.names[cls].lower()
-                conf = float(det.conf[0])
-                x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
-
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"{self.label} {conf:.2f}", (x1, max(0, y1-5)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                self.get_logger().info(f"{self.label}")
-                # msg = String()
-                # msg.data = self.label
-                # self.put_painting.publish(msg)
-                
-                if (self.label == 'person' and self.person_detect):
-                    u = (x1 + x2) // 2
-                    v = (y1 + y2) // 2
-                    if not (0 <= u < W and 0 <= v < H):
-                        continue
-                    z = float(depth[v, u])
-                    if z <= 0.0 or np.isnan(z):
-                        continue
-                    fx, fy = self.K[0, 0], self.K[1, 1]
-                    cx, cy = self.K[0, 2], self.K[1, 2]
-                    X = (u - cx) * z / fx
-                    Y = (v - cy) * z / fy
-
-                    pt = PointStamped()
-                    pt.header.frame_id = pair.frame_id
-                    pt.header.stamp = pair.stamp
-                    pt.point.x, pt.point.y, pt.point.z = X, Y, z
-                    self.person_point_cam_pub.publish(pt)
-                    self.get_logger().info(f"{self.label}")
-
-
-            self.display_frame = frame
-            self.last_processed_stamp = pair.stamp
-            # self.get_logger().info("Camera intrinsics received")
-
-
-        finally:
-            self.infer_lock.release()
-            # self.processing_done_event.set()
-
-
-    # ---------------------------
-    # Display loop
-    # ---------------------------
-    def display_loop(self):
-        while not self.shutdown_requested:
-            if self.display_frame is not None:
-                cv2.imshow('yolo', self.display_frame)
-                key = cv2.waitKey(1) & 0xFF
-                if key == 27:  # ESC
-                    self.shutdown_requested = True
-                    break
+        # 메인 타겟의 3D 포인트(카메라 좌표)
+        if best_main_center is not None:
+            cx, cy = best_main_center
+            # 깊이(mm 또는 m). 일반적으로 depth가 uint16(mm)일 수 있음
+            d = float(depth[cy, cx])
+            if depth.dtype == np.uint16:
+                Z = d / 1000.0
             else:
-                time.sleep(0.01)
-        cv2.destroyAllWindows()
+                Z = d  # 이미 m 단위라고 가정
 
+            if self.K is not None and Z > 0:
+                fx, fy = self.K[0, 0], self.K[1, 1]
+                cx0, cy0 = self.K[0, 2], self.K[1, 2]
+                X = (cx - cx0) * Z / fx
+                Y = (cy - cy0) * Z / fy
+
+                pt = PointStamped()
+                pt.header.frame_id = self.camera_frame_id or 'oakd_rgb_camera_frame'  # 안전장치
+                pt.header.stamp = stamp
+                # pt = PointStamped()
+                # pt.header.frame_id = 'camera_link'  # 기존 좌표계 유지(카메라 프레임명은 기존 사용 중인 값으로)
+                # pt.header.stamp = stamp
+                
+                pt.point.x = X
+                pt.point.y = Y
+                pt.point.z = Z
+                self.person_point_cam_pub.publish(pt)
+
+        # 시각화 프레임 퍼블리시
+        self.person_pub.publish(self.bridge.cv2_to_imgmsg(frame, encoding='bgr8'))
+
+        # 사람 수 퍼블리시(신규)
+        self.pub_people_count.publish(Int32(data=person_cnt))
 
 def main():
     rclpy.init()
@@ -343,6 +200,230 @@ def main():
         node.destroy_node()
         rclpy.shutdown()
 
-
 if __name__ == '__main__':
     main()
+
+# import rclpy
+# from rclpy.node import Node
+# from rclpy.executors import MultiThreadedExecutor
+# from rclpy.qos import QoSProfile, QoSReliabilityPolicy
+
+# from sensor_msgs.msg import Image, CameraInfo, CompressedImage
+# from geometry_msgs.msg import PointStamped
+# from std_msgs.msg import String
+
+# from cv_bridge import CvBridge
+# from ultralytics import YOLO
+
+# import numpy as np
+# import cv2
+# import time
+# import threading
+# from collections import namedtuple
+# from message_filters import Subscriber, ApproximateTimeSynchronizer
+
+# Pair = namedtuple("Pair", "rgb depth stamp frame_id")
+
+
+# class YoloPerson(Node):
+#     def __init__(self):
+#         super().__init__('detect_to_thing')
+
+#         # === Internal state ===
+#         self.bridge = CvBridge()
+#         self.K = None
+#         self.rgb_image = None
+#         self.depth_image = None
+#         self.camera_frame = None
+#         self.shutdown_requested = False
+#         self.logged_intrinsics = False
+
+#         self._pair_lock = threading.Lock()
+#         self._latest_pair = None
+#         self.infer_lock = threading.Lock()
+#         self.last_processed_stamp = None
+
+#         # === Load YOLO model ===
+#         self.model = YOLO(
+#             "/home/rokey/turtlebot4_ws/src/turtle_musium/resource/only_people_8n_batch32.pt"
+#         )
+#         self.model.to('cuda')
+#         self.get_logger().info("YOLOv8 model loaded.")
+
+#         # === Publishers ===
+#         self.main_pub = self.create_publisher(String, '/robot8/which_hand', 10)
+#         self.person_point_cam_pub = self.create_publisher(PointStamped, '/robot8/point_camera', 10)
+
+#         # === Subscriptions ===
+#         qos_profile = QoSProfile(depth=2)
+#         qos_profile.reliability = QoSReliabilityPolicy.BEST_EFFORT
+
+#         self.create_subscription(CameraInfo, '/robot8/oakd/rgb/camera_info', self.camera_info_callback, 10)
+
+#         self.rgb_sub = Subscriber(self, CompressedImage, '/robot8/oakd/rgb/image_raw/compressed', qos_profile=qos_profile)
+#         self.depth_sub = Subscriber(self, Image, '/robot8/oakd/stereo/image_raw', qos_profile=qos_profile)
+
+#         self.ts = ApproximateTimeSynchronizer([self.rgb_sub, self.depth_sub], queue_size=10, slop=0.4)
+#         self.ts.registerCallback(self.synced_rgb_depth_cb)
+
+#         # === Threads ===
+#         self.infer_thread = threading.Thread(target=self.run_inference_thread, daemon=True)
+#         self.infer_thread.start()
+
+#         # self.display_frame = None
+#         # self.display_thread = threading.Thread(target=self.display_loop, daemon=True)
+#         # self.display_thread.start()
+
+#     # ---------------------------
+#     # Callbacks & processing
+#     # ---------------------------
+#     def camera_info_callback(self, msg):
+#         self.K = np.array(msg.k).reshape(3, 3)
+#         if not self.logged_intrinsics:
+#             self.get_logger().info("Camera intrinsics received")
+#             self.logged_intrinsics = True
+
+#     def synced_rgb_depth_cb(self, rgb_msg: CompressedImage, depth_msg: Image):
+#         try:
+#             # Decode RGB
+#             np_arr = np.frombuffer(rgb_msg.data, np.uint8)
+#             rgb = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+#             # Decode depth
+#             depth_raw = self.bridge.imgmsg_to_cv2(depth_msg, "passthrough")
+#             if depth_msg.encoding == "16UC1":
+#                 depth_raw = depth_raw.astype(np.float32) / 1000.0  # mm -> m
+#             elif depth_msg.encoding == "32FC1":
+#                 pass
+#             else:
+#                 raise ValueError(f"Unexpected encoding: {depth_msg.encoding}")
+
+#             # Crop depth to align with RGB FOV
+#             h, w = depth_raw.shape
+#             crop_x = int(0.26 * w / 2) * 2
+#             crop_y = int(0.18 * h / 2) * 2
+#             depth_crop = depth_raw[crop_y:h - crop_y, crop_x:w - crop_x]
+#             depth_aligned = cv2.resize(depth_crop, (w, h), cv2.INTER_NEAREST)
+
+#             with self._pair_lock:
+#                 self._latest_pair = Pair(
+#                     rgb=rgb,
+#                     depth=depth_aligned,
+#                     stamp=rgb_msg.header.stamp,
+#                     frame_id=rgb_msg.header.frame_id or "oakd_rgb_frame"
+#                 )
+
+#         except Exception as e:
+#             self.get_logger().error(f"Sync decode failed: {e}")
+
+#     # ---------------------------
+#     # Inference loop
+#     # ---------------------------
+#     def run_inference_thread(self):
+#         while not self.shutdown_requested:
+#             self.process_frame()
+#             time.sleep(0.2)
+
+#     def process_frame(self):
+#         if self.K is None:
+#             return
+#         if not self.infer_lock.acquire(blocking=False):
+#             return
+
+#         try:
+#             with self._pair_lock:
+#                 if self._latest_pair is None:
+#                     return
+#                 pair = self._latest_pair
+#                 # self._latest_pair = None
+
+#             rgb = pair.rgb.copy()
+#             depth = pair.depth.copy()
+
+#             results = self.model.predict(rgb, conf=0.7, verbose=False)[0]
+#             frame = rgb.copy()
+
+#             any_main = False
+#             H, W = depth.shape[:2]
+
+#             for det in results.boxes:
+#                 cls = int(det.cls[0])
+#                 label = self.model.names[cls].lower()
+#                 conf = float(det.conf[0])
+#                 x1, y1, x2, y2 = map(int, det.xyxy[0].tolist())
+
+#                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+#                 cv2.putText(frame, f"{label} {conf:.2f}", (x1, max(0, y1-5)),
+#                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+#                 # Publish gesture
+#                 if label in ("one", "five"):
+#                     self.main_pub.publish(String(data=label))
+#                     self.get_logger().info(f"{label}")
+
+#                     any_main = True
+
+#                 # Publish 3D point
+#                 if label in ("car", "bottle"):
+#                     u = (x1 + x2) // 2
+#                     v = (y1 + y2) // 2
+#                     if not (0 <= u < W and 0 <= v < H):
+#                         continue
+#                     z = float(depth[v, u])
+#                     if z <= 0.0 or np.isnan(z):
+#                         continue
+#                     fx, fy = self.K[0, 0], self.K[1, 1]
+#                     cx, cy = self.K[0, 2], self.K[1, 2]
+#                     X = (u - cx) * z / fx
+#                     Y = (v - cy) * z / fy
+
+#                     pt = PointStamped()
+#                     pt.header.frame_id = pair.frame_id
+#                     pt.header.stamp = pair.stamp
+#                     pt.point.x, pt.point.y, pt.point.z = X, Y, z
+#                     self.person_point_cam_pub.publish(pt)
+#                     self.get_logger().info(f"{label}")
+
+
+#             if not any_main:
+#                 self.main_pub.publish(String(data="none"))
+
+#             self.display_frame = frame
+#             self.last_processed_stamp = pair.stamp
+#             # self.get_logger().info("Camera intrinsics received")
+
+
+#         finally:
+#             self.infer_lock.release()
+
+#     # ---------------------------
+#     # Display loop
+#     # ---------------------------
+#     def display_loop(self):
+#         while not self.shutdown_requested:
+#             if self.display_frame is not None:
+#                 cv2.imshow('yolo', self.display_frame)
+#                 key = cv2.waitKey(1) & 0xFF
+#                 if key == 27:  # ESC
+#                     self.shutdown_requested = True
+#                     break
+#             else:
+#                 time.sleep(0.01)
+#         cv2.destroyAllWindows()
+
+
+# def main():
+#     rclpy.init()
+#     node = YoloPerson()
+#     executor = MultiThreadedExecutor(num_threads=3)
+#     executor.add_node(node)
+#     try:
+#         executor.spin()
+#     finally:
+#         executor.shutdown()
+#         node.destroy_node()
+#         rclpy.shutdown()
+
+
+# if __name__ == '__main__':
+#     main()

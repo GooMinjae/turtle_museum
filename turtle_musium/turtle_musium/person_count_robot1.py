@@ -1,11 +1,19 @@
 #!/usr/bin/env python3
-from ultralytics import YOLO
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
 from rclpy.executors import MultiThreadedExecutor
-from sensor_msgs.msg import CompressedImage
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
+
+from nav2_msgs.action import NavigateToPose
+from rclpy.action import ActionClient
+from geometry_msgs.msg import PoseStamped
+import math
+
+
+from rcl_interfaces.srv import SetParameters
+from rcl_interfaces.msg import Parameter, ParameterValue, ParameterType
 from std_msgs.msg import Int32, Bool
+from sensor_msgs.msg import CompressedImage
 from turtlebot4_navigation.turtlebot4_navigator import TurtleBot4Directions, TurtleBot4Navigator
 from geometry_msgs.msg import PoseWithCovarianceStamped
 import numpy as np
@@ -18,16 +26,26 @@ class Turtlebot4GuideCounter(Node):
     """
     상태머신:
       - WAIT_AUDIENCE: 관객 수 대기
-      - NAVIGATING: undock + goal 이동 중
-      - INFERENCING: YOLO로 사람 수 확인 중 (연속 N프레임 일치 시 True)
-      - LATCHED: True 보낸 뒤 정지, 새 audience_count 오면 해제
+      - INFERENCING: 관객 수 일치 여부 검사(연속 N프레임)
+      - LATCHED: 일치 확인됨(people_check 발행 후 래치)
     """
+    STATE_WAIT = 0
+    STATE_INF = 1
+    STATE_LATCHED = 2
+
     def __init__(self):
         super().__init__('robot8_guide_counter')
-        # ===== Parameters =====
-        # Perception
+
+        # QoS
+        self.qos_sensor = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
+        # ===== Parameters (기존 유지) =====
         self.declare_parameter('input_topic', '/robot8/oakd/rgb/image_raw/compressed')
-        self.declare_parameter('conf', 0.5)
+        self.declare_parameter('conf', 0.7)
         self.declare_parameter('match_threshold', 3)        # 연속 일치 프레임 수
         self.declare_parameter('bypass_inference', False)   # 테스트 모드: 추론 건너뛰기(= n_people = audience_count)
         # Navigation
@@ -38,8 +56,8 @@ class Turtlebot4GuideCounter(Node):
         self.declare_parameter('goal_y', 9.0)
         self.declare_parameter('goal_dir', 'EAST')
         self.declare_parameter('timeout_sec', 180.0)
-        # Load params
-        self.people_exit = False
+        self.topic_detected_people = '/robot8/audience_count_from_detector'
+
         self.input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
         self.conf = float(self.get_parameter('conf').value)
         self.match_threshold = int(self.get_parameter('match_threshold').value)
@@ -47,7 +65,14 @@ class Turtlebot4GuideCounter(Node):
         self.initial_x = float(self.get_parameter('initial_x').value)
         self.initial_y = float(self.get_parameter('initial_y').value)
         self.initial_dir = str(self.get_parameter('initial_dir').value).upper()
-
+        self.navigator = TurtleBot4Navigator("/robot8")
+        self.get_logger().info("Waiting for Nav2 to become active...")
+        self.navigator.waitUntilNav2Active()
+        try:
+            if self.navigator.getDockedStatus():
+                self.navigator.undock()
+        except Exception:
+            pass
                 # ===== 추가 목표 좌표 (순차 이동용) =====
         self.targets = [
             (-0.283, 1.12, "WEST"),   # 첫 번째 목표 (지금 쓰는 것)
@@ -55,9 +80,11 @@ class Turtlebot4GuideCounter(Node):
             (0, 0, "NORTH") # home
         ]
         self.current_target_idx = 0
-
         self.timeout_sec = float(self.get_parameter('timeout_sec').value)
-        # ===== State =====
+        self.bypass = True  # 탐지 노드가 대신 추론하므로 항상 True로 운용
+
+        # 상태
+        self.detected_people_count = 0
         self.STATE_WAIT = 'WAIT_AUDIENCE'
         self.STATE_NAV = 'NAVIGATING'
         self.STATE_INF = 'INFERENCING'
@@ -68,74 +95,114 @@ class Turtlebot4GuideCounter(Node):
         self.consec_match = 0
         self.latched = False
         self._nav_busy = False
-        self._lock = threading.Lock()
-        # ===== YOLO =====
-        self.model = None
-        if not self.bypass:
-            try:
-                self.model = YOLO('/home/rokey/turtlebot4_ws/src/turtle_musium/resource/only_people_8n_batch32.pt')
-                self.model.to('cuda')
-            except Exception as e:
-                self.get_logger().warn(f'YOLO load failed, switching to bypass: {e}')
-                self.bypass = True
-        # ===== IO =====s
-        self.create_subscription(Bool, '/exit/people_detected', self.cb_people_detected, 10)
-        self.create_subscription(
-            CompressedImage, self.input_topic, self.image_cb, qos_profile_sensor_data
-        )
-        self.create_subscription(
-            Int32, '/robot8/audience_count', self.audience_cb, 10
-        )
+
+        self.goal_x = float(self.get_parameter('goal_x').value)
+        self.goal_y = float(self.get_parameter('goal_y').value)
+        self.goal_dir = self.get_parameter('goal_dir').get_parameter_value().string_value
+
+        self.nav_client = ActionClient(self, NavigateToPose, '/navigate_to_pose')
+
+        # ===== Topics (기존 유지) =====
+        self.topic_req_people = '/robot8/people'           # (있다면 사용) 외부에서 요구 인원 알림
+        self.topic_audience = '/robot8/audience_count'      # 목표 인원수(Int32)
+        self.topic_people_check = '/robot8/people_check'    # 일치 시 퍼블리시(Int32)
+        # 신규: 탐지 노드 제공 실 감지 인원수
+        self.create_subscription(Int32, self.topic_audience, self.audience_cb, 10)
+        self.create_subscription(Int32, self.topic_detected_people, self.detected_cb, 10)
         self.pub_people_check = self.create_publisher(Int32, '/robot8/people_check', 10)
         self.pub_people = self.create_publisher(Bool, '/robot8/people', 10)
         self.pub_arrived = self.create_publisher(Bool, '/robot8/arrived', 10)
-        # ===== Timer for inference =====
-        self.create_timer(0.1, self.infer_tick)  # 10Hz
-        self.get_logger().info(
-            f'Started. state={self.state}, match_threshold={self.match_threshold}, '
-            f'conf={self.conf}, bypass_inference={self.bypass}'
-        )
 
-    # ---------- Callbacks ----------
-    def cb_people_detected(self, msg: Bool):
-        self.people_exit = msg.data
+        # ===== IO =====
+        # 이미지 구독은 불필요. 기존 파라미터/토픽은 유지하지만 미사용
+        # self.create_subscription(CompressedImage, self.input_topic, self.image_cb, self.qos_sensor)
 
-    def image_cb(self, msg: CompressedImage):
-        try:
-            np_arr = np.frombuffer(msg.data, np.uint8)
-            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
-            if frame is not None:
-                self.rgb_image = frame
-        except Exception as e:
-            self.get_logger().warn(f'Image decode failed: {e}')
+
+
+
+        # 루프 스레드
+        self.running = True
+        self.th = threading.Thread(target=self.loop, daemon=True)
+        self.th.start()
+
+
+    def _enable_tracker(self, enable: bool = True):
+        # tracker 노드 네임스페이스/이름에 맞춰 서비스 이름 구성
+        srv_name = '/robot8/tracker_person_node/set_parameters'
+        cli = self.create_client(SetParameters, srv_name)
+        if not cli.wait_for_service(timeout_sec=3.0):
+            self.get_logger().warn(f"tracker param service not available: {srv_name}")
+            return
+        # 요청 생성
+        req = SetParameters.Request()
+        p = Parameter()
+        p.name = 'enable_follow'
+        p.value = ParameterValue(type=ParameterType.PARAMETER_BOOL, bool_value=bool(enable))
+        req.parameters = [p]
+        fut = cli.call_async(req)
+        rclpy.spin_until_future_complete(self, fut, timeout_sec=3.0)
+        if fut.result() is not None:
+            self.get_logger().info(f"[people_count] tracker enable_follow set to {enable}")
+        else:
+            self.get_logger().warn("Failed to set tracker parameter")
+
+    def dir_to_quat(self, dir_str: str):
+        yaw_map = {
+            'EAST': 0.0,
+            'NORTH': math.pi/2,
+            'WEST': math.pi,
+            'SOUTH': -math.pi/2,
+        }
+        yaw = yaw_map.get(dir_str.upper(), 0.0)
+        return math.cos(yaw/2.0), math.sin(yaw/2.0)
+
+    def send_goal(self, x, y, dir_str):
+        if not self.nav_client.wait_for_server(timeout_sec=1.0):
+            self.get_logger().warn("NavigateToPose server not available")
+            return
+        pose = PoseStamped()
+        pose.header.frame_id = 'map'
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        qw, qz = self.dir_to_quat(dir_str)
+        pose.pose.orientation.w = qw
+        pose.pose.orientation.z = qz
+        goal = NavigateToPose.Goal()
+        goal.pose = pose
+        self.nav_client.send_goal_async(goal)
+        self.get_logger().info(f"[NAV2] Goal sent: ({x}, {y}, dir={dir_str})")
+
+
+    # ===== Callbacks =====
     def audience_cb(self, msg: Int32):
-        val = int(msg.data)
-        with self._lock:
-            self.audience_count = val
-            # 어떤 값이든 수신 시 래치 해제 & 일치 카운터 리셋
+        self.audience_count = int(msg.data)
+        self.get_logger().info(f"[audience_count] -> {self.audience_count}")
+        if self.state == self.STATE_WAIT and self.audience_count > 0:
+            self.state = self.STATE_INF
             self.consec_match = 0
-            if self.latched:
-                self.latched = False
-                self.pub_people_check.publish(Int32(self.audience_count))
-            # 상태 전이: WAIT/LATCHED에서 관객수>0이면 NAV 시작
-            if val > 0 and not self._nav_busy and self.state in (self.STATE_WAIT, self.STATE_LATCHED):
-                self._transition_to(self.STATE_NAV)
-                self._start_navigation_thread()
-    # ---------- Navigation ----------
-    def _on_navigation_complete(self, future):
-        result = future.result()
-        if not result:
-            self.get_logger().error("Navigation failed!")
-            return
+            threading.Thread(target=self._run_nav_flow, daemon=True).start()
+            self.latched = False
 
-        # 마지막 목표인지 확인
-        if self.current_target_idx == len(self.targets) - 2:
-            # 마지막이면 INFERENCING 안 하고 종료 처리
-            self.get_logger().info("마지막 목표 도착! 추론 건너뜀.")
-            self._transition_to(self.STATE_LATCHED)
-            return
-        # 마지막이 아니면 INFERENCING 상태로 전환
-        self._transition_to(self.STATE_INF)
+    def detected_cb(self, msg: Int32):
+        self.detected_people_count = int(msg.data)
+
+    # ===== Main Loop =====
+    def loop(self):
+        rate = self.create_rate(15)
+        start_t = time.time()
+        while rclpy.ok() and self.running:
+            try:
+                if self.state == self.STATE_INF and not self.latched:
+                    self.infer_tick()
+                # timeout 처리(기존 유지)
+                if (time.time() - start_t) > self.timeout_sec:
+                    self.get_logger().warn("counting timeout")
+                    start_t = time.time()
+            except Exception as e:
+                self.get_logger().warn(f"loop error: {e}")
+            rate.sleep()
+
     def _dir_enum(self, name: str):
         return getattr(TurtleBot4Directions, name)
     def _start_navigation_thread(self):
@@ -143,11 +210,10 @@ class Turtlebot4GuideCounter(Node):
         threading.Thread(target=self._run_nav_flow, daemon=True).start()
     def _run_nav_flow(self):
         try:
-            nav = TurtleBot4Navigator("/robot8")
-            # Nav2 활성 대기
+            nav = self.navigator
             self.get_logger().info("Waiting for Nav2 to become active...")
             nav.waitUntilNav2Active()
-            # undock (필요 시)
+
             try:
                 if nav.getDockedStatus():
                     nav.undock()
@@ -155,13 +221,11 @@ class Turtlebot4GuideCounter(Node):
             except Exception as e:
                 self.get_logger().warn(f"Undock skipped: {e}")
 
-            # 목표 pose # 수정
             target = self.targets[self.current_target_idx]
             goal_pose = nav.getPoseStamped([target[0], target[1]], self._dir_enum(target[2]))
             self.get_logger().info(f"Navigating to ({target[0]:.2f}, {target[1]:.2f}) dir={target[2]}")
             nav.startToPose(goal_pose)
 
-            # 완료 대기 (타임아웃 포함)
             t0 = time.time()
             while not nav.isTaskComplete():
                 if time.time() - t0 > self.timeout_sec:
@@ -176,65 +240,72 @@ class Turtlebot4GuideCounter(Node):
                 self.get_logger().info("Arrived at goal, switching to INFERENCING")
                 if self.current_target_idx == len(self.targets) - 2:
                     self.pub_people.publish(Bool(data=True))
+                    self._transition_to(self.STATE_INF)
 
-                self._transition_to(self.STATE_INF)
+                elif self.current_target_idx == len(self.targets) - 1:
+                    # ✅ 마지막 목표 도착: 루프 종료
+                    self.get_logger().info("Final target reached. Shutting down.")
+
+                    arrived_back = nav.isTaskComplete()
+                    if arrived_back:
+                        self.get_logger().info("Return OK; enabling tracker and finishing.")
+                        self._enable_tracker(True)   # ✅ 여기서 tracker ON
+                    else:
+                        self.get_logger().warn("Return FAILED; tracker remains OFF.")
+
+                    # 마무리(원하면 종료)
+                    # self.running = False
+                    return
+
+                else:
+                    self._transition_to(self.STATE_INF)
             else:
                 self._transition_to(self.STATE_WAIT)
+
         except Exception as e:
             self.get_logger().error(f"Navigation error: {e}")
             self._transition_to(self.STATE_WAIT)
         finally:
             self._nav_busy = False
-    # ---------- Inference ----------
+
     def infer_tick(self):
-        if self.state != self.STATE_INF:
-            return
-        if self.rgb_image is None:
-            return
-        
-        if self.people_exit:
-            self.get_logger().warn("People exit detected during inference → Returning home.")
-            self.current_target_idx = len(self.targets) - 1  # home 인덱스로 이동
-            self._transition_to(self.STATE_NAV)
-            self._start_navigation_thread()
-            self.people_exit = False  # 한번만 실행되도록 reset
-            return
+        # 탐지 노드에서 전달된 값 사용
+        n_people = int(self.detected_people_count)
 
-        # 마지막 목표 지점이라면 추론 건너뜀
-        if self.current_target_idx == len(self.targets) - 2:
-            self._transition_to(self.STATE_LATCHED)
-            return
+        if (self.audience_count != 0) and (n_people == self.audience_count):
+            self.consec_match += 1
+        else:
+            self.consec_match = 0
 
-        try:
-            frame = self.rgb_image.copy()
-            results = self.model.predict(source=frame, classes=[0], conf=self.conf, verbose=False)
-            r = results[0] if results else None
-            n_people = int(len(r.boxes)) if (r is not None and getattr(r, 'boxes', None) is not None) else 0
+        self.get_logger().info(f"[people] detected={n_people}, target={self.audience_count}, match={self.consec_match}/{self.match_threshold}")
 
-            # 연속 일치 판정
-            if (self.audience_count != 0) and (n_people == self.audience_count):
-                self.consec_match += 1
-            else:
-                self.consec_match = 0
-
-            if self.consec_match >= self.match_threshold:
-                self.pub_people_check.publish(Int32(data=self.audience_count))
-                # self.pub_people.publish(Bool(data=True))
-                self.latched = True
-                self._transition_to(self.STATE_LATCHED)
-                self.get_logger().info(f'people_check -> True (matched {self.consec_match} frames). Latched.')
-
-                # 다음 좌표 이동
-                if self.current_target_idx + 1 < len(self.targets):
+        if self.consec_match >= self.match_threshold:
+            self.pub_people_check.publish(Int32(data=self.audience_count))
+            self.latched = True
+            self.state = self.STATE_LATCHED
+            self.get_logger().info("[people_check] MATCH confirmed and latched")
+            if hasattr(self, "targets") and hasattr(self, "current_target_idx"):
+                # 다음 인덱스가 범위 내인지 확인
+                if self.current_target_idx < len(self.targets) - 1:
                     self.current_target_idx += 1
-                    self._transition_to(self.STATE_NAV)
-                    self._start_navigation_thread()
+                    self.get_logger().info(f"Next target index -> {self.current_target_idx}")
+                else:
+                    self.get_logger().info("No more targets. Staying latched.")
+                    self.state = self.STATE_LATCHED
+                    return
             else:
-                # 일치하지 않으면 INFERENCING 유지, 위치 고정
-                self.get_logger().info(f"Matching: {self.consec_match}/{self.match_threshold}, waiting...")
-        except Exception as e:
-            self.get_logger().error(f'Inference failed: {e}')
-    # ---------- Utils ----------
+                # targets 없이 goal 파라미터만 쓰는 경우라면, 여기서 끝내거나
+                # 별도 goal_x2/goal_y2 파라미터를 쓰는 기존 코드가 이미 있다면 그 로직 호출
+                self.state = self.STATE_LATCHED
+                return
+
+            # 2) 상태를 WAIT로 전환하고 _run_nav_flow 재개
+            self.state = self.STATE_WAIT
+            if not getattr(self, "_nav_busy", False):
+                self._nav_busy = True
+                threading.Thread(target=self._run_nav_flow, daemon=True).start()
+
+
     def _transition_to(self, new_state: str):
         if new_state == self.state:
             return
@@ -247,15 +318,14 @@ class Turtlebot4GuideCounter(Node):
 def main():
     rclpy.init()
     node = Turtlebot4GuideCounter()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        # 콜백/타이머 동시성 여유
-        executor = MultiThreadedExecutor(num_threads=2)
-        executor.add_node(node)
         executor.spin()
-    except KeyboardInterrupt:
-        pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
+
 if __name__ == '__main__':
     main()

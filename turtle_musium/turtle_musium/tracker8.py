@@ -7,6 +7,8 @@ from tf2_ros import Buffer, TransformListener  # TF 변환 버퍼/리스너
 from rclpy.node import Node  # ROS2 노드 기본 클래스
 from voice_processing import tts
 from std_msgs.msg import String
+from std_msgs.msg import Int32
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.time import Time
 from transforms3d.euler import euler2quat
 
@@ -19,18 +21,13 @@ import math  # 거리 계산(hypot) 등에 사용
 import threading
 
 class TrackerPersonNode(Node):
-    """
-    사람 포인트('/robot8/point_camera')만 추종하는 단순 트래커.
-    - 카메라 좌표계의 포인트를 TF로 map 좌표계로 변환
-    - NavigateToPose 액션으로 목표를 주기적 갱신(디바운스 적용)
-    - 남은 거리 < close_enough_distance 조건이 연속 3회면 업데이트 일시 차단
-    - /robot8/amcl_pose 로봇 위치가 특정 존에 진입하면: goal 취소 + TTS + wait_sec 후 자동 재개
-    """
     def __init__(self):
         super().__init__('tracker_person_node')  # 노드 이름 설정
 
         # ---------- 파라미터 선언(기본값 포함) ----------
-        self.declare_parameter('close_enough_distance', 0.1)  # 근접 판정 임계값(m)
+        self.declare_parameter('enable_follow', False)
+        self.follow_enabled = bool(self.get_parameter('enable_follow').value)
+        self.declare_parameter('close_enough_distance', 0.5)  # 근접 판정 임계값(m)
         self.declare_parameter('min_goal_interval_sec', 0.5)  # 목표 갱신 최소 시간 간격(s)
         self.declare_parameter('min_goal_translation', 0.05)  # 목표 갱신 최소 이동 거리(m)
         self.declare_parameter('approach_offset', 0.3)  # 사람에게 다가갈 때 z축으로 뺄 거리(m)
@@ -49,12 +46,13 @@ class TrackerPersonNode(Node):
              'tts': '마지막 작품은 화난 핑구입니다. 이 작품은 2010년대 중반 "Noot Noot!"이라는 밈으로 더 유명한 작품입니다.'
              , 'wait_sec': 0},
         ]
-        # ---------- 파라미터 실제 값 가져오기 ----------
+
         # zones는 파라미터가 아니므로 get_parameter()로 가져오지 않습니다.
-        self._last_tf_warn_ns = 0
-        self.rotating = False
-        self.pub_cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
-        # self.map_frame = self.get_parameter('map_frame').value
+        # self._last_tf_warn_ns = 0
+        # self.rotating = False
+        # self.pub_cmd_vel = self.create_publisher(Twist, '/cmd_vel', 10)
+
+        self.add_on_set_parameters_callback(self._on_set_params)
         self.close_enough_distance = float(self.get_parameter('close_enough_distance').value)
         self.min_goal_interval = float(self.get_parameter('min_goal_interval_sec').value)
         self.min_goal_translation = float(self.get_parameter('min_goal_translation').value)
@@ -102,6 +100,13 @@ class TrackerPersonNode(Node):
         self.create_timer(1.0 / max(1.0, self.zone_check_hz), self.zone_check_tick)
         self.get_logger().info('tracker_person_node started.')  # 시작 로그
 
+    def _on_set_params(self, params):
+        for p in params:
+            if p.name == 'enable_follow':
+                self.follow_enabled = bool(p.value)
+                self.get_logger().info(f"[tracker] enable_follow -> {self.follow_enabled}")
+        return SetParametersResult(successful=True)
+
     def publish_multiple(self, pub, msg, repeat: int = 5, interval: float = 0.2):
         """
         스레드를 이용해 반복 퍼블리시
@@ -126,29 +131,33 @@ class TrackerPersonNode(Node):
 
     # ===================== 콜백: 카메라 포인트 수신 =====================
     def cb_point_from_camera(self, pt: PointStamped):
+        if not self.follow_enabled:
+            return 
+        
         """카메라 좌표계에서 들어온 사람 포인트를 map으로 변환하고 goal을 전송(디바운스 적용)."""
-        if self.paused_for_zone or self.block_goal_updates or self.people_exit:
+        if self.paused_for_zone  or self.people_exit:
             return  # 존 설명 중이거나 근접 래치면 목표 갱신 중단
         
             # ----- 회전 중이면 멈춤 -----
-        if self.rotating:  # <<< MODIFY
-            self.rotating = False
-            self.get_logger().info("Point received, stopping rotation.")  # <<< ADD
-            twist = Twist()  # 회전 정지
-            self.pub_cmd_vel.publish(twist)  # <<< ADD
+        # if self.rotating:  # <<< MODIFY
+        #     self.rotating = False
+        #     self.get_logger().info("Point received, stopping rotation.")  # <<< ADD
+        #     twist = Twist()  # 회전 정지
+        #     self.pub_cmd_vel.publish(twist)  # <<< ADD
 
-        # ----- 마지막 포인트 저장 (회전 방향 결정용) ----- 
-        self.last_camera_point = pt  # <<< ADD
+        # # ----- 마지막 포인트 저장 (회전 방향 결정용) ----- 
+        # self.last_camera_point = pt  # <<< ADD
 
         # 사람에게 너무 가까이 붙지 않도록 목표 z 조정
         if pt.point.z > self.approach_offset:
             pt.point.z = pt.point.z - self.approach_offset
         else:
             pt.point.z = self.approach_offset
-
+        self.get_logger().info(f"{pt.point.z}")
 
         try:
-            pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=1.5))
+            # pt_map = self.tf_buffer.transform(pt, 'map', timeout=rclpy.duration.Duration(seconds=0.5))
+            pt_map = self.tf_buffer.transform(pt, 'map', timeout=Duration(seconds=0.5))
             self.latest_map_point = pt_map
             xy = (pt_map.point.x, pt_map.point.y)
         except Exception as e:
@@ -244,40 +253,40 @@ class TrackerPersonNode(Node):
         self.goal_handle = None
 
             # ----- 마지막 목표 도착 후 회전 모드 시작 -----
-        if hasattr(self, 'last_camera_point') and self.last_camera_point is not None:  # <<< MODIFY
-            self.rotating = True
-            self._start_rotation(self.last_camera_point)  # <<< MODIFY
+        # if hasattr(self, 'last_camera_point') and self.last_camera_point is not None:  # <<< MODIFY
+        #     self.rotating = True
+        #     self._start_rotation(self.last_camera_point)  # <<< MODIFY
 
         # 최신 위치가 이전 Goal과 충분히 다를 때만 재전송
-        if self.latest_map_point is not None:
-            xy = (self.latest_map_point.point.x, self.latest_map_point.point.y)
-            if self.last_goal_xy is None or math.hypot(xy[0]-self.last_goal_xy[0], xy[1]-self.last_goal_xy[1]) > self.min_goal_translation:
-                self._send_goal(xy)
-                self.last_goal_send_time = time.time()
-                self.last_goal_xy = xy
+        # if self.latest_map_point is not None:
+        #     xy = (self.latest_map_point.point.x, self.latest_map_point.point.y)
+        #     if self.last_goal_xy is None or math.hypot(xy[0]-self.last_goal_xy[0], xy[1]-self.last_goal_xy[1]) > self.min_goal_translation:
+        #         self._send_goal(xy)
+        #         self.last_goal_send_time = time.time()
+        #         self.last_goal_xy = xy
 
     # ===================== 회전 루프 함수 수정 =====================
-    def _start_rotation(self, pt_camera):  # <<< MODIFY
-        """마지막 목표 후, point_camera 수신 전까지 회전"""
-        # 회전 방향 결정
-        angular_speed = 0.5  # rad/s 기본값
-        if pt_camera.point.x > 0:  # 오른쪽이면 시계 방향
-            angular_speed = -abs(angular_speed)
-        else:  # 왼쪽이면 반시계 방향
-            angular_speed = abs(angular_speed)
+    # def _start_rotation(self, pt_camera):  # <<< MODIFY
+    #     """마지막 목표 후, point_camera 수신 전까지 회전"""
+    #     # 회전 방향 결정
+    #     angular_speed = 0.5  # rad/s 기본값
+    #     if pt_camera.point.x > 0:  # 오른쪽이면 시계 방향
+    #         angular_speed = -abs(angular_speed)
+    #     else:  # 왼쪽이면 반시계 방향
+    #         angular_speed = abs(angular_speed)
 
-        def rotate_loop():
-            rate = self.create_rate(10)  # 10Hz
-            twist = Twist()
-            twist.angular.z = angular_speed
-            while rclpy.ok() and self.rotating:
-                self.pub_cmd_vel.publish(twist)
-                rate.sleep()
-            # 회전 멈춤
-            twist.angular.z = 0.0
-            self.pub_cmd_vel.publish(twist)
+    #     def rotate_loop():
+    #         rate = self.create_rate(10)  # 10Hz
+    #         twist = Twist()
+    #         twist.angular.z = angular_speed
+    #         while rclpy.ok() and self.rotating:
+    #             self.pub_cmd_vel.publish(twist)
+    #             rate.sleep()
+    #         # 회전 멈춤
+    #         twist.angular.z = 0.0
+    #         self.pub_cmd_vel.publish(twist)
 
-        threading.Thread(target=rotate_loop, daemon=True).start()  # <<< ADD
+    #     threading.Thread(target=rotate_loop, daemon=True).start()  # <<< ADD
 
 # ===================== 존 로직: 타이머 콜백 =====================
     def zone_check_tick(self):
