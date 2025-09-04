@@ -32,10 +32,10 @@ class ArtworkBridge(QObject):
     trackDone  = pyqtSignal(bool)
 
     def __init__(self,
-                 topic_now="/robot8/now_loc",
-                 topic_done="/robot8/is_done_track",
-                 piece_db=None,
-                 use_best_effort=False):
+                topic_now="/robot8/now_loc",
+                topic_done="/robot8/is_done_track",
+                piece_db=None,
+                use_best_effort=False):
         super().__init__()
         self._topic_now  = topic_now
         self._topic_done = topic_done
@@ -81,7 +81,7 @@ class ArtworkBridge(QObject):
         def _cb_done(msg: Bool):
             self.trackDone.emit(bool(msg.data))
 
-        # --- 구독 생성 (한 곳에서 모두 만든 뒤 한 번만 spin) ---
+        # --- 구독 생성 ---
         self._node.create_subscription(String, self._topic_now,  _cb_show, self._qos)
         self._node.create_subscription(Bool,   self._topic_done, _cb_done, self._qos)
 

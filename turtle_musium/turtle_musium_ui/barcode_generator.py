@@ -50,7 +50,7 @@ class BarcodeGenerator:
 DUMMY = [
     {
         "count_people": "3",
-        "gift_data": "1111",
+        "gift_data": "0101",
     },
     {
         "count_people": "3",

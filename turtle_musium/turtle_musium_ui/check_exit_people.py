@@ -54,9 +54,6 @@ class ExitPeopleWorker(Node):
             self.thread.start()
 
     def run(self):
-        # 초기 False 한번
-        self.publish_bool(False)
-
         while self.running:
             ok, frame = self.cap.read()
             if not ok:
@@ -68,9 +65,7 @@ class ExitPeopleWorker(Node):
             self.sig.frameCaptured.emit(processed_frame)
 
             if detected:
-                for _ in range(30):
-                    self.publish_bool(True)
-                    time.sleep(0.1)
+                self.publish_bool(True)
                 self.sig.detected.emit(True)
                 if self.stop_on_detect:
                     self.running = False

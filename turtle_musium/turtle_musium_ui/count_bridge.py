@@ -21,7 +21,7 @@ class CountBridge(QObject):
         self._thread = None
         self._node = None
         self._pub_req = None
-        self._sub_done = None   # ← 중요: 구독 핸들 보관
+        self._sub_done = None
 
     def start(self):
         if self._running: return
@@ -72,10 +72,6 @@ class CountBridge(QObject):
                 # (버전에 따라 context 인자 없을 수도 있음)
                 rclpy.shutdown()
 
-    def _cb_done(self, msg: Int32):
-        self._node.get_logger().info(f"recv /tour/count/done: {msg.data}")  # 디버그
-        self.countDone.emit(int(msg.data))
-
     def publish_expected_count(self, n: int, repeat: int = 30, delay: float = 0.1):
         if not self._node or not self._pub_req:
             return
@@ -85,6 +81,10 @@ class CountBridge(QObject):
             self._node.get_logger().info(f"Pub {i+1}/{repeat}")
             self._pub_req.publish(msg)
             time.sleep(delay)   # 너무 빠르면 subscriber가 놓칠 수 있어서 약간의 간격을 줌
+
+    def _cb_done(self, msg: Int32):
+        self._node.get_logger().info(f"recv /tour/count/done: {msg.data}")
+        self.countDone.emit(int(msg.data))
 
 
     def stop(self):

@@ -94,7 +94,7 @@ class MonitoringApp:
             )
             self.pc2_bridge.artworkEvent.connect(self._on_pc2_artwork_event)
             self.pc2_bridge.start()
-        self._publish_startup_signal()
+        # self._publish_startup_signal()
 
 
 

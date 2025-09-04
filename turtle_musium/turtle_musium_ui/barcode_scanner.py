@@ -13,7 +13,7 @@ Thread 사용 이유
 또한, 명시적인 스레드 종료 및 자원 해제를 통해 라이프 사이클을 완전히 컨트롤 할 수 있다.
 '''
 
-CAM_IDX = 4
+CAM_IDX = 2
 
 
 class BarcodeScannerWorker(QObject):

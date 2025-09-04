@@ -44,11 +44,10 @@ class Pc2Bridge(QObject):
         )
         self._node = Node("pc2_bridge")
 
-        # 1) 작품 상황 구독: Int32MultiArray로 [1,0,1,...]
+        # 작품 상황 구독: Int32MultiArray
         def _cb_art(msg: Int32MultiArray):
             try:
-                vals = list(msg.data)  # 예: [1, 0, 1]
-                # piece_ids 길이에 맞춰 자르거나, 부족하면 0으로 패딩
+                vals = list(msg.data)
                 if len(vals) < len(self.piece_ids):
                     vals = vals + [0] * (len(self.piece_ids) - len(vals))
                 else:
@@ -94,7 +93,6 @@ class Pc2Bridge(QObject):
         self._node.create_subscription(Int32MultiArray, self._topic_art, _cb_art, qos)
 
         def _cb_gift(req, resp):
-            self._node.get_logger().info("++++++++++++++++++++++++++++")
             try:
                 if self.current_visit_id is None:
                     resp.success = False
@@ -112,8 +110,7 @@ class Pc2Bridge(QObject):
                 bitstring = ''.join('1' if int(counts.get(k, 0)) > 0 else '0' for k in GIFT_KEYS)
 
                 resp.success = True
-                resp.message = bitstring           # 예: "1001"
-                self._node.get_logger().info(f"{bitstring}")
+                resp.message = bitstring
                 
                 return resp
             except Exception as e:

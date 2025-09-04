@@ -43,13 +43,13 @@ class GuideTracking(QWidget):
         self.patrolFrame.connect(self._set_patrol_pixmap)
 
     def set_ui(self, *,
-               guide_cam_label,
-               patrol_cam_label,
-               info_label,
-               guide_topic="/robot8/oakd/rgb/image_raw/compressed",
-               patrol_topic="/robot9/oakd/rgb/image_raw/compressed",
-               now_loc_topic="/robot8/now_loc",
-               done_topic="/robot8/is_done_track"):
+            guide_cam_label,
+            patrol_cam_label,
+            info_label,
+            guide_topic="/robot8/oakd/rgb/image_raw/compressed",
+            patrol_topic="/robot9/oakd/rgb/image_raw/compressed",
+            now_loc_topic="/robot8/now_loc",
+            done_topic="/robot8/is_done_track"):
         """라벨/토픽 주입"""
         self.guide_cam_label = guide_cam_label
         self.patrol_cam_label = patrol_cam_label
