@@ -30,8 +30,6 @@ class Robot9ToMain(Node):
 
             self.get_logger().info("set initial pose")
 
-            # self.navigator.waitUntilNav2Active()
-            # self.get_logger().info("NAV2")
             self.gift_result = False
             self.patrol = True
             self.gift_stay = False
@@ -44,22 +42,9 @@ class Robot9ToMain(Node):
                     'painting_3': self.navigator.getPoseStamped([-0.98, 2.06], TurtleBot4Directions.NORTH),
                     'exit': self.navigator.getPoseStamped([-2.7, 1.62], TurtleBot4Directions.WEST),
                     'gift_shop': self.navigator.getPoseStamped([-1.62, -0.09], TurtleBot4Directions.SOUTH),
-                    'gift_stay': self.navigator.getPoseStamped([-1.27, 0.61], TurtleBot4Directions.WEST),
+                    'gift_stay': self.navigator.getPoseStamped([-0.92, 0.95], TurtleBot4Directions.SOUTH_WEST),
                 }
-            # self.goal_options = {
-            #     'home': {'pose': [0.0, 0.0], 'direction': TurtleBot4Directions.SOUTH},
-            #     'entrance': {'pose': [-1.97, 5.25], 'direction': TurtleBot4Directions.SOUTH},
-            #     'painting_1': {'pose': [-0.23, 4.67], 'direction': TurtleBot4Directions.NORTH},
-            #     'painting_2': {'pose': [-1.71, 3.93], 'direction': TurtleBot4Directions.SOUTH},
-            #     'painting_3': {'pose': [-0.98, 2.06], 'direction': TurtleBot4Directions.NORTH},
-            #     'exit': {'pose': [-2.7, 1.62], 'direction': TurtleBot4Directions.WEST},
-            #     'gift_shop': {'pose': [-1.72, -0.09], 'direction': TurtleBot4Directions.SOUTH},
-            #     'gift_stay': {'pose': [-1.37, 0.61], 'direction': TurtleBot4Directions.WEST},
-            #     'Exit': None
-            # }
-            # self.get_robot_position = self.create_subscription(
-            #     PoseWithCovarianceStamped, '/robot8/amcl_pose', self.cb_robot_position, 10
-            # )
+
         self.sub_person_exit = self.create_subscription(Bool,'/exit/people_detected',self.callback_start,10)
         self.sub_start = self.create_subscription(Bool,'/robot9/init',self.callback_start,10)
         self.sub_gift = self.create_subscription(Bool, '/robot8/end_track1', self.callback_gift_go, 10)
@@ -80,6 +65,7 @@ class Robot9ToMain(Node):
         self.current_location_index = 0
         self.waiting_for_painting = False
         self.patrol_result = False
+        self.target_result = True
 
     def callback_painting(self, msg: String):
         if msg.data == "pice 1" and not self.pice_1:
@@ -124,9 +110,9 @@ class Robot9ToMain(Node):
 
     # 기념품 가져오고 대기
     def callback_gift_stay(self,msg: Bool):
-        if msg.data:
-            self.go_to_pose_and_check('gift_stay')
-            self.gift_stay = True
+        self.go_to_pose_and_check('gift_stay')
+        self.gift_stay = True
+
     # 가이드로봇 가이드 끝        
     def callback_guide_end(self,msg: Bool):
         if msg and self.gift_stay:
@@ -134,18 +120,20 @@ class Robot9ToMain(Node):
             self.gift_stay = False
 
     def callback_start(self, msg: Bool):
-        person = Bool()
-        person.data = False
-        self.pub_person.publish(person)
+        if self.target_result:
+            self.target_result = False
+            person = Bool()
+            person.data = False
+            self.pub_person.publish(person)
 
-        self.navigator.cancelTask()
+            self.navigator.cancelTask()
 
-        self.get_logger().info("경로 시작")
+            self.get_logger().info("경로 시작")
 
-        self.sequence = ['entrance', 'painting_1', 'painting_2', 'painting_3', 'exit']
-        self.patrol_result = True
-        self.current_location_index = 0
-        self.start_patrol()
+            self.sequence = ['entrance', 'painting_1', 'painting_2', 'painting_3', 'exit']
+            self.patrol_result = True
+            self.current_location_index = 0
+            self.start_patrol()
     def start_patrol(self):
         if self.patrol_result:
             if self.current_location_index >= len(self.sequence):
@@ -154,21 +142,14 @@ class Robot9ToMain(Node):
                 msg = Bool()
                 msg.data = False
                 self.pub_check.publish(msg)
-
+    
                 
                 self.pice_1 = False
                 self.pice_2 = False
                 self.pice_3 = False
                 location = None
-                # if self.gift_result:
-                #     msg= Bool()
-                #     msg.data = True
-                #     self.navigator.startToPose(self.goal_options['gift_shop'])
-                #     self.pub_gift_start.publish(msg)
+                self.target_result = True
 
-                #     self.gift_result = False
-                #     self.patrol_result = False
-            
             else:
                 location = self.sequence[self.current_location_index]
 
@@ -190,45 +171,10 @@ class Robot9ToMain(Node):
         self.navigator.startToPose(self.goal_options[location_name])
 
         while not self.navigator.isTaskComplete():
-            # if self.gift_result:
-            #     self.get_logger().warn("이동 중 인터럽트 발생 → 경로 취소")
-            #     self.navigator.cancelTask()
-            #     msg= Bool()
-            #     msg.data = True
-            #     self.navigator.startToPose(self.goal_options['gift_shop'])
-            #     self.pub_gift_start.publish(msg)
 
-            #     self.gift_result = False
-            #     self.patrol_result = False
-            #     return
             rclpy.spin_once(self, timeout_sec=0.1)
 
         self.get_logger().info(f"{location_name} 도착")
-
-    # def call_check_painting_service(self):
-    #     self.get_logger().info("그림 유무 확인 중...")
-
-    #     client = self.create_client(Trigger, '/robot9/painting')
-    #     if not client.wait_for_service(timeout_sec=5.0):
-    #         self.get_logger().error('서비스 서버에 연결할 수 없습니다.')
-    #         return False
-
-    #     req = Trigger.Request()
-    #     future = client.call_async(req)
-
-    #     rclpy.spin_until_future_complete(self, future)
-    #     if future.result() is not None:
-    #         result = future.result()
-    #         if result.success:
-    #             self.get_logger().info("그림 있음: 다음 장소로 이동")
-    #             return True
-    #         else:
-    #             self.get_logger().info("그림 없음: 이동 중단")
-    #             return False
-    #     else:
-    #         self.get_logger().error("서비스 응답 없음")
-    #         return False
-    
 
 
 

@@ -50,6 +50,10 @@ class tracker_node(Node):
         try:
             if self.label in ("pingu","moo","haowl","pinga"):
                 pt.point.z = pt.point.z - 0.3
+            else:
+                pt.point.z = pt.point.z - 0.5
+
+
             self.get_logger().info(f"Detected at map: (x = {pt.point.x:.2f}, y = {pt.point.y:.2f} z = {pt.point.z:.2f})")
             if pt.point.z <= 0.0:
                 pt.point.z = 0.0
@@ -122,26 +126,33 @@ class tracker_node(Node):
             self.get_logger().warn("Goal was rejected.")
             return
         self.get_logger().info("Goal accepted.")
-        self._get_result_future = self.goal_handle.get_result_async()
-        self._get_result_future.add_done_callback(self.goal_result_callback)
-
-    def goal_result_callback(self, future):
-        result = future.result().result
-        self.get_logger().info(f"Goal finished with result code: {future.result().status}")
-        if self.gift_put:
-            self.pub_stay.publish(Bool(data=True))
+        if self.label in ("pingu","moo","haowl","pinga"):
+            msg = Bool()
+            msg.data = True
+            self.pub_stay.publish(msg)
             self.get_logger().info("pub_True")
-            self.gift_put = False
 
-        self.goal_handle = None
+    #     self._get_result_future = self.goal_handle.get_result_async()
+    #     self._get_result_future.add_done_callback(self.goal_result_callback)
+
+    # def goal_result_callback(self, future):
+    #     result = future.result().result
+    #     self.get_logger().info(f"Goal finished with result code: {future.result().status}")
+    #     if self.gift_put:
+    #         self.pub_stay.publish(Bool(data=True))
+    #         self.get_logger().info("pub_True")
+    #         self.gift_put = False
+
+    #     self.goal_handle = None
 
 def main(args=None):
     rclpy.init(args=args)
     node = tracker_node()
-    executor = MultiThreadedExecutor(num_threads=4)
+    executor = MultiThreadedExecutor(num_threads=2)
     executor.add_node(node)
     try:
         executor.spin()
+        # rclpy.spin(node)
     finally:
         executor.shutdown()
         node.destroy_node()

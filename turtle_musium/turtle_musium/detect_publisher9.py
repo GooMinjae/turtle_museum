@@ -89,7 +89,6 @@ class YoloPerson(Node):
         self.should_infer = msg.data
 
     def callback_giftshop(self, msg: Bool):
-        # 요청이 올 때마다 재요청하지 않도록 가드 (선택)
         if self._gift_inflight:
             self.get_logger().warn("gift_data 요청 진행 중 → 스킵")
             return
@@ -99,12 +98,12 @@ class YoloPerson(Node):
             return
 
         self.should_infer = msg.data
-        self.gift_data = []  # 매번 리셋
+        self.gift_data = [] 
         req = Trigger.Request()
         future = self.gift_client.call_async(req)
-        future.add_done_callback(self._on_gift_response)  # ← 비동기 콜백만 사용
+        future.add_done_callback(self._on_gift_response)
         self._gift_inflight = True
-        # self.get_logger().info("gift_data 요청 전송")  # (참고) future 객체 자체를 로그 찍을 필요 X
+
 
     def _on_gift_response(self, future):
         try:
@@ -126,8 +125,6 @@ class YoloPerson(Node):
             raw += "0" * (len(self.gift_name) - len(raw))
         raw = raw[:len(self.gift_name)]
 
-        # (선택) 스레드 세이프
-        # with self._gift_lock:
         self.gift_data = [name for name, bit in zip(self.gift_name, raw) if bit == '1']
 
         self.get_logger().info(f"받은 message: {raw} → gift_data={self.gift_data}, should_infer={self.should_infer}")
@@ -202,11 +199,8 @@ class YoloPerson(Node):
 
         H, W = rgb.shape[:2]
         frame = rgb.copy()
-        person_cnt = 0
         best_main_center = None
-        best_main_depth = None
 
-        # 단일 가장 큰 person 박스를 대표로 선택 (기존 동작 가정)
         max_area = 0
         for det in results.boxes:
             cls = int(det.cls[0])
@@ -413,9 +407,14 @@ if __name__ == '__main__':
 #     # Inference loop
 #     # ---------------------------
 #     def run_inference_thread(self):
-#         while not self.shutdown_requested:
-#             self.process_frame()
-#             time.sleep(0.2)
+#         rate = self.create_rate(30)
+#         while rclpy.ok() and self.processing:
+#             if self.should_infer:
+#                 try:
+#                     self.process_frame()
+#                 except Exception as e:
+#                     self.get_logger().warn(f"process_frame error: {e}")
+#                 rate.sleep()
 
 #     def process_frame(self):
 #         if self.K is None:
@@ -562,7 +561,7 @@ if __name__ == '__main__':
 #         self.last_processed_stamp = None
 #         self.person_detect = False
 #         self.label = None
-#         self.processing_done_event = threading.Event()  # Event 객체
+#         # self.processing_done_event = threading.Event()  # Event 객체
 #         self.response_event = threading.Event()  # Response 이벤트
 #         self.response = None
 #         self.gift_data = []
@@ -601,9 +600,10 @@ if __name__ == '__main__':
 #         self.ts.registerCallback(self.synced_rgb_depth_cb)
 
 #         # === Threads ===
+#         self.processing = True
+
 #         self.infer_thread = threading.Thread(target=self.run_inference_thread, daemon=True)
 #         self.infer_thread.start()
-
 #         self.display_frame = None
 #         self.display_thread = threading.Thread(target=self.display_loop, daemon=True)
 #         self.display_thread.start()
@@ -749,10 +749,14 @@ if __name__ == '__main__':
 #     # Inference loop
 #     # ---------------------------
 #     def run_inference_thread(self):
-#         while not self.shutdown_requested:
+#         rate = self.create_rate(30)
+#         while rclpy.ok() and self.processing:
 #             if self.should_infer:
-#                 self.process_frame()
-#             # time.sleep(0.5)
+#                 try:
+#                     self.process_frame()
+#                 except Exception as e:
+#                     self.get_logger().warn(f"process_frame error: {e}")
+#                 rate.sleep()
 
 #     def process_frame(self):
 #         if self.K is None:
@@ -801,7 +805,7 @@ if __name__ == '__main__':
 
 #                 self.label = label
 
-#                 if label == 'person' and self.person_detect:
+#                 if (label == 'person') and self.person_detect:
 #                     u = (x1 + x2) // 2
 #                     v = (y1 + y2) // 2
 #                     if not (0 <= u < W and 0 <= v < H):
