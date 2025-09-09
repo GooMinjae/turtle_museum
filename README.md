@@ -1,4 +1,4 @@
-# 🏛️ turtle_musium
+# 🏛️ turtle_museum
 
 **무인 박물관 보조 로봇 시스템 (Docent & Guard Robot)**  
 본 프로젝트는 TurtleBot4와 ROS2 기반으로 **도슨트 안내**와 **박물관 경비** 역할을 수행하는 자율주행 로봇 시스템입니다.  
