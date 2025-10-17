@@ -85,7 +85,8 @@
 
 ## 📹 시연 영상
 
-▶️ [프로젝트 영상 보기](https://drive.google.com/file/d/1DuDNQV7jyd9tyvowtBA9Rhn2f8gMsLjb/view?usp=drive_link)
+▶️ [프로젝트 영상]
+![Image](https://github.com/user-attachments/assets/3cb8e679-3464-4152-85ca-81f1a6289caf)
 
 ---
 
